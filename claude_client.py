@@ -2,13 +2,13 @@ import json
 
 import anthropic
 
-from config import ANTHROPIC_API_KEY
+import settings
 
 MODEL = "claude-opus-4-5"
 
 
 def _client():
-    return anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    return anthropic.Anthropic(api_key=settings.get("ANTHROPIC_API_KEY"))
 
 
 def _build_prompt(book_title, target_age, theme, main_characters, art_style_preference, page_count):

@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-from config import KIE_AI_API_KEY
+import settings
 
 BASE_URL = "https://api.kie.ai/api/v1/flux/kontext"
 DEFAULT_NEGATIVE_PROMPT = (
@@ -15,7 +15,7 @@ POLL_TIMEOUT_SECONDS = 300
 
 def _headers():
     return {
-        "Authorization": f"Bearer {KIE_AI_API_KEY}",
+        "Authorization": f"Bearer {settings.get('KIE_AI_API_KEY')}",
         "Content-Type": "application/json",
     }
 

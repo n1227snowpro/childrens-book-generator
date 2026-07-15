@@ -100,3 +100,87 @@ function showError(message) {
   progressError.classList.remove("hidden");
   submitBtn.disabled = false;
 }
+
+const tabButtons = document.querySelectorAll(".tab-btn");
+const tabPanels = document.querySelectorAll(".tab-panel");
+
+tabButtons.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    tabButtons.forEach((b) => b.classList.remove("active"));
+    tabPanels.forEach((p) => p.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
+    if (btn.dataset.tab === "settings") {
+      loadSettingsStatus();
+    }
+  });
+});
+
+const settingsForm = document.getElementById("settings-form");
+const settingsSubmitBtn = document.getElementById("settings-submit-btn");
+const settingsSavedMsg = document.getElementById("settings-saved-msg");
+
+async function loadSettingsStatus() {
+  try {
+    const res = await fetch("/api/settings");
+    const data = await res.json();
+    for (const [key, info] of Object.entries(data)) {
+      const statusEl = document.querySelector(`.setting-status[data-key="${key}"]`);
+      const inputEl = document.getElementById(key);
+      if (!statusEl) continue;
+
+      statusEl.classList.remove("configured", "env", "unconfigured");
+      if (info.configured && info.source === "settings") {
+        statusEl.textContent = `Configured (${info.masked})`;
+        statusEl.classList.add("configured");
+      } else if (info.configured && info.source === "env") {
+        statusEl.textContent = `Configured via environment (${info.masked})`;
+        statusEl.classList.add("env");
+      } else {
+        statusEl.textContent = "Not configured";
+        statusEl.classList.add("unconfigured");
+      }
+
+      if (inputEl && info.masked) {
+        inputEl.placeholder = info.masked;
+      }
+    }
+  } catch (err) {
+    // status display is best-effort
+  }
+}
+
+settingsForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  settingsSubmitBtn.disabled = true;
+  settingsSavedMsg.classList.add("hidden");
+
+  const payload = {};
+  for (const el of settingsForm.querySelectorAll("input[name]")) {
+    if (el.value.trim()) {
+      payload[el.name] = el.value.trim();
+    }
+  }
+
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error("Failed to save settings");
+
+    for (const el of settingsForm.querySelectorAll("input[name]")) {
+      el.value = "";
+    }
+    settingsSavedMsg.textContent = "Saved.";
+    settingsSavedMsg.classList.remove("hidden", "error");
+    await loadSettingsStatus();
+  } catch (err) {
+    settingsSavedMsg.textContent = err.message;
+    settingsSavedMsg.classList.remove("hidden");
+    settingsSavedMsg.classList.add("error");
+  } finally {
+    settingsSubmitBtn.disabled = false;
+  }
+});

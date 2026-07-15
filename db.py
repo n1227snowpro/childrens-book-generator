@@ -49,6 +49,12 @@ def init_db():
                 story_text TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
 
 
 def _now():
@@ -126,3 +132,18 @@ def delete_book(book_id):
     with _lock, get_conn() as conn:
         conn.execute("DELETE FROM books WHERE book_id = ?", (book_id,))
         conn.execute("DELETE FROM pages WHERE book_id = ?", (book_id,))
+
+
+def get_setting(key):
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+
+def set_setting(key, value):
+    with _lock, get_conn() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )

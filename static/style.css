@@ -48,6 +48,7 @@ label {
 
 input[type="text"],
 input[type="number"],
+input[type="password"],
 input[type="file"],
 select,
 textarea {
@@ -140,3 +141,54 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   border-radius: 8px;
   border: 1px solid var(--border);
 }
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 16px 24px 0;
+}
+
+.tab-btn {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 10px 16px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.tab-btn:hover { background: transparent; color: var(--text); }
+
+.tab-btn.active {
+  color: var(--accent-dark);
+  border-bottom-color: var(--accent);
+}
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+.settings-heading {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 28px 0 16px;
+}
+
+.settings-heading:first-child { margin-top: 0; }
+
+.setting-status.configured { color: #2e7d32; }
+.setting-status.env { color: #8a6d1f; }
+.setting-status.unconfigured { color: var(--muted); }
+
+.saved-msg {
+  color: #2e7d32;
+  font-size: 0.85rem;
+  margin-top: 10px;
+}
+
+.saved-msg.error { color: #c0392b; }

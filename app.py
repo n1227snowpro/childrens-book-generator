@@ -20,6 +20,7 @@ import db
 import kie_client
 import pdf_builder
 import r2_client
+import settings
 from config import BOOKS_DIR, PORT, UPLOADS_DIR
 
 app = Flask(__name__)
@@ -196,6 +197,22 @@ def index():
 @app.route("/api/health")
 def health():
     return jsonify({"status": "ok", "version": "1.0.0"})
+
+
+@app.route("/api/settings", methods=["GET"])
+def get_settings():
+    return jsonify(settings.status())
+
+
+@app.route("/api/settings", methods=["POST"])
+def update_settings():
+    data = request.get_json(force=True, silent=True) or {}
+    updated = []
+    for key in settings.KEYS:
+        if key in data and data[key]:
+            settings.set(key, data[key].strip())
+            updated.append(key)
+    return jsonify({"updated": updated, "settings": settings.status()})
 
 
 @app.route("/api/books/generate", methods=["POST"])

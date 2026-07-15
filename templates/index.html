@@ -15,7 +15,13 @@
     </div>
   </header>
 
+  <nav class="tabs">
+    <button type="button" class="tab-btn active" data-tab="generate">Generate</button>
+    <button type="button" class="tab-btn" data-tab="settings">Settings</button>
+  </nav>
+
   <main>
+    <section id="tab-generate" class="tab-panel active">
     <form id="book-form">
       <div class="field">
         <label for="book_title">Book Title</label>
@@ -75,6 +81,62 @@
       <a id="pdf-link" class="btn-primary" href="#" target="_blank">Download PDF</a>
       <div id="thumbnails" class="thumbnails"></div>
     </div>
+    </section>
+
+    <section id="tab-settings" class="tab-panel">
+      <form id="settings-form">
+        <h2 class="settings-heading">AI Services</h2>
+
+        <div class="field">
+          <label for="ANTHROPIC_API_KEY">Anthropic (Claude) API Key</label>
+          <input type="password" id="ANTHROPIC_API_KEY" name="ANTHROPIC_API_KEY" placeholder="sk-ant-..." autocomplete="off" />
+          <p class="hint setting-status" data-key="ANTHROPIC_API_KEY">Checking…</p>
+        </div>
+
+        <div class="field">
+          <label for="KIE_AI_API_KEY">KIE.ai API Key</label>
+          <input type="password" id="KIE_AI_API_KEY" name="KIE_AI_API_KEY" placeholder="Enter your KIE.ai key" autocomplete="off" />
+          <p class="hint setting-status" data-key="KIE_AI_API_KEY">Checking…</p>
+        </div>
+
+        <h2 class="settings-heading">Cloudflare R2 Storage</h2>
+
+        <div class="field">
+          <label for="R2_ACCOUNT_ID">R2 Account ID</label>
+          <input type="text" id="R2_ACCOUNT_ID" name="R2_ACCOUNT_ID" autocomplete="off" />
+          <p class="hint setting-status" data-key="R2_ACCOUNT_ID">Checking…</p>
+        </div>
+
+        <div class="field">
+          <label for="R2_ACCESS_KEY">R2 Access Key</label>
+          <input type="password" id="R2_ACCESS_KEY" name="R2_ACCESS_KEY" autocomplete="off" />
+          <p class="hint setting-status" data-key="R2_ACCESS_KEY">Checking…</p>
+        </div>
+
+        <div class="field">
+          <label for="R2_SECRET_KEY">R2 Secret Key</label>
+          <input type="password" id="R2_SECRET_KEY" name="R2_SECRET_KEY" autocomplete="off" />
+          <p class="hint setting-status" data-key="R2_SECRET_KEY">Checking…</p>
+        </div>
+
+        <div class="field">
+          <label for="R2_BUCKET">R2 Bucket Name</label>
+          <input type="text" id="R2_BUCKET" name="R2_BUCKET" autocomplete="off" />
+          <p class="hint setting-status" data-key="R2_BUCKET">Checking…</p>
+        </div>
+
+        <div class="field">
+          <label for="R2_PUBLIC_DOMAIN">R2 Public Domain</label>
+          <input type="text" id="R2_PUBLIC_DOMAIN" name="R2_PUBLIC_DOMAIN" placeholder="https://files.example.com" autocomplete="off" />
+          <p class="hint setting-status" data-key="R2_PUBLIC_DOMAIN">Checking…</p>
+        </div>
+
+        <p class="hint">Leave a field blank to keep its current value. Keys are stored locally in this app's database, not in git.</p>
+
+        <button type="submit" id="settings-submit-btn">Save Settings</button>
+        <p id="settings-saved-msg" class="saved-msg hidden">Saved.</p>
+      </form>
+    </section>
   </main>
 
   <script src="{{ url_for('static', filename='app.js') }}"></script>
