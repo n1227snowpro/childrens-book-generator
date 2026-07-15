@@ -9,6 +9,20 @@ import settings
 BASE_URL = "https://api.kie.ai/api/v1"
 POLL_INTERVAL_SECONDS = 3
 POLL_TIMEOUT_SECONDS = 300
+GENERATION_RETRY_ATTEMPTS = 3
+GENERATION_RETRY_BACKOFF_SECONDS = 5
+
+
+def _with_retry(fn, attempts=GENERATION_RETRY_ATTEMPTS, backoff=GENERATION_RETRY_BACKOFF_SECONDS):
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as e:
+            last_error = e
+            if attempt < attempts:
+                time.sleep(backoff * attempt)
+    raise last_error
 
 # Prices and API shapes verified against docs.kie.ai (per-model doc pages) and kie.ai/pricing.
 MODELS = {
@@ -178,12 +192,15 @@ def generate_image(model_id, prompt, reference_image_url=None, aspect_ratio="1:1
 
     reference_image_urls = [reference_image_url] if reference_image_url else None
 
-    if model_id == "nano-banana":
-        return _generate_nano_banana(prompt, reference_image_urls, aspect_ratio)
-    if model_id in ("flux-kontext-pro", "flux-kontext-max"):
-        return _generate_flux_kontext(prompt, model_id, reference_image_urls, aspect_ratio)
-    if model_id == "gpt-image-2":
-        return _generate_gpt_image_2(prompt, reference_image_urls, aspect_ratio)
+    def _attempt():
+        if model_id == "nano-banana":
+            return _generate_nano_banana(prompt, reference_image_urls, aspect_ratio)
+        if model_id in ("flux-kontext-pro", "flux-kontext-max"):
+            return _generate_flux_kontext(prompt, model_id, reference_image_urls, aspect_ratio)
+        if model_id == "gpt-image-2":
+            return _generate_gpt_image_2(prompt, reference_image_urls, aspect_ratio)
+
+    return _with_retry(_attempt)
 
 
 def generate_character_reference(model_id, prompt, reference_image_url=None):
@@ -200,18 +217,23 @@ def generate_cover_image(model_id, prompt, reference_image_url=None):
 
 
 def generate_pages_concurrent(model_id, page_prompts, max_workers=5, on_complete=None):
+    """Generates every page independently. A page that still fails after retries does not
+    abort the rest of the book — its slot in the returned errors list holds the failure reason
+    instead, and the caller decides how to handle it (e.g. a placeholder illustration)."""
     results = [None] * len(page_prompts)
+    errors = [None] * len(page_prompts)
 
     def _worker(index, prompt):
-        url = generate_page_image(model_id, prompt)
-        results[index] = url
+        try:
+            results[index] = generate_page_image(model_id, prompt)
+        except Exception as e:
+            errors[index] = str(e)
         if on_complete:
-            on_complete(index)
-        return url
+            on_complete(index, errors[index])
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = [pool.submit(_worker, i, p) for i, p in enumerate(page_prompts)]
         for f in futures:
             f.result()
 
-    return results
+    return results, errors

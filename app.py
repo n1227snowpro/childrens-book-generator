@@ -14,6 +14,7 @@ from queue import Queue
 import requests
 from flask import Flask, Response, jsonify, redirect, render_template, request, stream_with_context
 from flask_cors import CORS
+from PIL import Image, ImageDraw, ImageFont
 
 import claude_client
 import cover_builder
@@ -81,6 +82,35 @@ def _download(url, dest_path):
         with open(dest_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
+
+
+def _build_placeholder_image(path, text):
+    img = Image.new("RGB", (768, 1024), color=(230, 214, 191))
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.load_default()
+
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if draw.textlength(candidate, font=font) <= 680:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+
+    line_height = 18
+    y = (1024 - len(lines) * line_height) / 2
+    for line in lines:
+        w = draw.textlength(line, font=font)
+        draw.text(((768 - w) / 2, y), line, fill=(110, 90, 70), font=font)
+        y += line_height
+
+    img.save(path, "JPEG", quality=90)
 
 
 def _download_path(book_id):
@@ -176,25 +206,30 @@ def _run_pipeline(job_id, params, uploaded_paths):
         progress_lock = threading.Lock()
         completed = {"n": 0}
 
-        def on_complete(_index):
+        def on_complete(_index, error):
             with progress_lock:
                 completed["n"] += 1
+                suffix = " (failed after retries, will use a placeholder)" if error else ""
                 _set_progress(
-                    job_id, "pages", f"Generating page {completed['n']}/{total_pages}",
+                    job_id, "pages", f"Generating page {completed['n']}/{total_pages}{suffix}",
                     completed["n"], total_pages,
                 )
 
         _set_progress(job_id, "pages", f"Generating page 0/{total_pages}", 0, total_pages)
-        image_urls = kie_client.generate_pages_concurrent(
+        image_urls, page_errors = kie_client.generate_pages_concurrent(
             image_model, page_prompts, max_workers=5, on_complete=on_complete
         )
+        failed_pages = [pages[i].get("page_num", i + 1) for i, err in enumerate(page_errors) if err]
 
         pages_for_pdf = []
         _set_progress(job_id, "page_uploads", "Uploading pages to storage", 0, total_pages)
         for idx, page in enumerate(pages):
             page_num = page.get("page_num", idx + 1)
             local_path = pages_dir / f"page-{page_num:03d}.jpg"
-            _download(image_urls[idx], local_path)
+            if image_urls[idx]:
+                _download(image_urls[idx], local_path)
+            else:
+                _build_placeholder_image(local_path, f"Illustration unavailable for page {page_num}")
             r2_key = f"books/{book_id}/pages/page-{page_num:03d}.jpg"
             s3_key = r2_client.upload_file(str(local_path), r2_key)
             db.add_page(book_id, page_num, s3_key, page.get("story_text", ""))
@@ -249,9 +284,18 @@ def _run_pipeline(job_id, params, uploaded_paths):
 
         pdf_url = _download_path(book_id)
         cover_url = _cover_path(book_id) if cover_key else None
+        warning = None
+        if failed_pages:
+            page_list = ", ".join(str(p) for p in failed_pages)
+            warning = (
+                f"{len(failed_pages)} page(s) could not be illustrated after retries "
+                f"(page {page_list}) — a placeholder was used instead."
+            )
         db.update_book(book_id, pdf_key=pdf_key, cover_key=cover_key, status="done")
         db.update_job(job_id, status="done", book_id=book_id, pdf_url=pdf_url, step="Done", current=1, total=1)
-        _push(job_id, {"done": True, "pdf_url": pdf_url, "cover_url": cover_url, "book_id": book_id})
+        _push(job_id, {
+            "done": True, "pdf_url": pdf_url, "cover_url": cover_url, "book_id": book_id, "warning": warning
+        })
 
     except Exception as e:
         db.update_job(job_id, status="error", error=str(e))

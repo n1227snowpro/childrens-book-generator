@@ -126,6 +126,16 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .error { color: #c0392b; margin-top: 10px; }
 
+.warning {
+  color: #8a6d1f;
+  background: #fdf3d8;
+  border: 1px solid #f0dfa0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+}
+
 #result-panel h2 { margin-bottom: 16px; }
 
 .result-actions {

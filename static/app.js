@@ -6,6 +6,7 @@ const progressFill = document.getElementById("progress-fill");
 const progressPct = document.getElementById("progress-pct");
 const progressError = document.getElementById("progress-error");
 const resultPanel = document.getElementById("result-panel");
+const resultWarning = document.getElementById("result-warning");
 const pdfLink = document.getElementById("pdf-link");
 const coverLink = document.getElementById("cover-link");
 const coverDimensionsEl = document.getElementById("cover-dimensions");
@@ -159,7 +160,7 @@ function listenToJob(jobId) {
       source.close();
       submitBtn.disabled = false;
       if (data.pdf_url) {
-        onComplete(data.pdf_url, data.book_id, data.cover_url);
+        onComplete(data.pdf_url, data.book_id, data.cover_url, data.warning);
       }
     }
   };
@@ -170,12 +171,19 @@ function listenToJob(jobId) {
   };
 }
 
-async function onComplete(pdfUrl, bookId, coverUrl) {
+async function onComplete(pdfUrl, bookId, coverUrl, warning) {
   progressFill.style.width = "100%";
   progressPct.textContent = "100%";
   resultPanel.classList.remove("hidden");
   pdfLink.href = pdfUrl;
   thumbnails.innerHTML = "";
+
+  if (warning) {
+    resultWarning.textContent = warning;
+    resultWarning.classList.remove("hidden");
+  } else {
+    resultWarning.classList.add("hidden");
+  }
 
   if (coverUrl) {
     coverLink.href = coverUrl;
