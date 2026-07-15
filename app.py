@@ -236,7 +236,7 @@ def generate_book():
         page_count = int(request.form.get("page_count", 75))
     except ValueError:
         page_count = 75
-    page_count = max(4, min(150, page_count))
+    page_count = max(1, min(150, page_count))
 
     if not book_title or not theme:
         return jsonify({"error": "book_title and theme are required"}), 400

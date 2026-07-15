@@ -12,11 +12,24 @@ def _client():
 
 
 def _build_prompt(book_title, target_age, theme, main_characters, art_style_preference, page_count):
-    intro = max(1, round(page_count * 0.10))
-    rising = max(1, round(page_count * 0.42))
-    climax = max(1, round(page_count * 0.20))
-    resolution = max(1, round(page_count * 0.18))
-    epilogue = max(0, page_count - (intro + rising + climax + resolution))
+    if page_count >= 5:
+        intro = max(1, round(page_count * 0.10))
+        rising = max(1, round(page_count * 0.42))
+        climax = max(1, round(page_count * 0.20))
+        resolution = max(1, round(page_count * 0.18))
+        epilogue = max(0, page_count - (intro + rising + climax + resolution))
+        arc_guidance = f"""Story arc proportions across the {page_count} pages (approximate):
+- Introduction: ~{intro} pages
+- Rising action: ~{rising} pages
+- Climax: ~{climax} pages
+- Resolution: ~{resolution} pages
+- Epilogue: ~{epilogue} pages"""
+    else:
+        arc_guidance = (
+            f"This is a short test run of only {page_count} page(s). Compress a complete, "
+            "self-contained story beat into the available page(s) rather than following a "
+            "full story arc."
+        )
 
     return f"""You are a professional children's book author and illustrator art director.
 
@@ -28,12 +41,7 @@ Create a complete blueprint for an illustrated children's book with these inputs
 - Art style preference: {art_style_preference}
 - Total pages: {page_count}
 
-Story arc proportions across the {page_count} pages (approximate):
-- Introduction: ~{intro} pages
-- Rising action: ~{rising} pages
-- Climax: ~{climax} pages
-- Resolution: ~{resolution} pages
-- Epilogue: ~{epilogue} pages
+{arc_guidance}
 
 Return a single raw JSON object with NO markdown formatting, NO code fences, and NO commentary before or after it. The JSON must have exactly this shape:
 
