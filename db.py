@@ -15,6 +15,26 @@ def get_conn():
     return conn
 
 
+def _strip_url_to_key(url):
+    """Legacy rows stored a full (broken) R2 endpoint URL where an object key belongs.
+    An object key is everything after the host, e.g. "books/<id>/final/x.pdf"."""
+    parts = url.split("/", 3)
+    return parts[3] if len(parts) == 4 else url
+
+
+def _repair_legacy_object_urls(conn):
+    for row in conn.execute("SELECT book_id, pdf_key FROM books WHERE pdf_key LIKE 'http%'").fetchall():
+        conn.execute(
+            "UPDATE books SET pdf_key = ? WHERE book_id = ?",
+            (_strip_url_to_key(row["pdf_key"]), row["book_id"]),
+        )
+    for row in conn.execute("SELECT id, s3_key FROM pages WHERE s3_key LIKE 'http%'").fetchall():
+        conn.execute(
+            "UPDATE pages SET s3_key = ? WHERE id = ?",
+            (_strip_url_to_key(row["s3_key"]), row["id"]),
+        )
+
+
 def init_db():
     with _lock, get_conn() as conn:
         conn.execute("""
@@ -35,7 +55,7 @@ def init_db():
                 book_id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 page_count INTEGER NOT NULL,
-                pdf_url TEXT,
+                pdf_key TEXT,
                 created_at TEXT NOT NULL,
                 status TEXT NOT NULL,
                 image_model TEXT
@@ -45,21 +65,30 @@ def init_db():
             conn.execute("ALTER TABLE books ADD COLUMN image_model TEXT")
         except sqlite3.OperationalError:
             pass
+        try:
+            conn.execute("ALTER TABLE books RENAME COLUMN pdf_url TO pdf_key")
+        except sqlite3.OperationalError:
+            pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS pages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 book_id TEXT NOT NULL,
                 page_num INTEGER NOT NULL,
-                s3_url TEXT,
+                s3_key TEXT,
                 story_text TEXT
             )
         """)
+        try:
+            conn.execute("ALTER TABLE pages RENAME COLUMN s3_url TO s3_key")
+        except sqlite3.OperationalError:
+            pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
         """)
+        _repair_legacy_object_urls(conn)
 
 
 def _now():
@@ -92,7 +121,7 @@ def get_job(job_id):
 def create_book(book_id, title, page_count, status="running", image_model=None):
     with _lock, get_conn() as conn:
         conn.execute(
-            "INSERT INTO books (book_id, title, page_count, pdf_url, created_at, status, image_model) "
+            "INSERT INTO books (book_id, title, page_count, pdf_key, created_at, status, image_model) "
             "VALUES (?, ?, ?, NULL, ?, ?, ?)",
             (book_id, title, page_count, _now(), status, image_model),
         )
@@ -107,11 +136,11 @@ def update_book(book_id, **fields):
         conn.execute(f"UPDATE books SET {cols} WHERE book_id = ?", values)
 
 
-def add_page(book_id, page_num, s3_url, story_text):
+def add_page(book_id, page_num, s3_key, story_text):
     with _lock, get_conn() as conn:
         conn.execute(
-            "INSERT INTO pages (book_id, page_num, s3_url, story_text) VALUES (?, ?, ?, ?)",
-            (book_id, page_num, s3_url, story_text),
+            "INSERT INTO pages (book_id, page_num, s3_key, story_text) VALUES (?, ?, ?, ?)",
+            (book_id, page_num, s3_key, story_text),
         )
 
 
@@ -128,7 +157,7 @@ def get_book(book_id):
             return None
         book = dict(book)
         pages = conn.execute(
-            "SELECT page_num, s3_url, story_text FROM pages WHERE book_id = ? ORDER BY page_num", (book_id,)
+            "SELECT page_num, s3_key, story_text FROM pages WHERE book_id = ? ORDER BY page_num", (book_id,)
         ).fetchall()
         book["pages"] = [dict(p) for p in pages]
         return book

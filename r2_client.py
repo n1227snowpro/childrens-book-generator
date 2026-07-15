@@ -4,6 +4,8 @@ import boto3
 
 import settings
 
+PRESIGNED_URL_EXPIRES_IN = 3600
+
 
 def _get_client():
     return boto3.client(
@@ -15,22 +17,25 @@ def _get_client():
     )
 
 
-def _public_url(key):
-    domain = settings.get("R2_PUBLIC_DOMAIN").rstrip("/")
-    return f"{domain}/{key}"
-
-
 def upload_file(local_path, key):
     content_type = mimetypes.guess_type(local_path)[0] or "application/octet-stream"
     _get_client().upload_file(
         local_path, settings.get("R2_BUCKET"), key, ExtraArgs={"ContentType": content_type}
     )
-    return _public_url(key)
+    return key
 
 
 def upload_bytes(data, key, content_type="application/octet-stream"):
     _get_client().put_object(Bucket=settings.get("R2_BUCKET"), Key=key, Body=data, ContentType=content_type)
-    return _public_url(key)
+    return key
+
+
+def presigned_url(key, expires_in=PRESIGNED_URL_EXPIRES_IN):
+    return _get_client().generate_presigned_url(
+        "get_object",
+        Params={"Bucket": settings.get("R2_BUCKET"), "Key": key},
+        ExpiresIn=expires_in,
+    )
 
 
 def delete_prefix(prefix):

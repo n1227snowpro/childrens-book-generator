@@ -12,7 +12,7 @@ from pathlib import Path
 from queue import Queue
 
 import requests
-from flask import Flask, Response, jsonify, render_template, request, stream_with_context
+from flask import Flask, Response, jsonify, redirect, render_template, request, stream_with_context
 from flask_cors import CORS
 
 import claude_client
@@ -80,6 +80,14 @@ def _download(url, dest_path):
                 f.write(chunk)
 
 
+def _download_path(book_id):
+    return f"/api/books/{book_id}/download"
+
+
+def _page_image_path(book_id, page_num):
+    return f"/api/books/{book_id}/pages/{page_num}/image"
+
+
 def _run_pipeline(job_id, params, uploaded_paths):
     book_id = str(uuid.uuid4())
     image_model = params["image_model"]
@@ -113,7 +121,8 @@ def _run_pipeline(job_id, params, uploaded_paths):
             ref_url = None
             if i < len(uploaded_paths):
                 key = f"books/{book_id}/character-refs/upload-{i}{Path(uploaded_paths[i]).suffix}"
-                ref_url = r2_client.upload_file(uploaded_paths[i], key)
+                r2_client.upload_file(uploaded_paths[i], key)
+                ref_url = r2_client.presigned_url(key)
             try:
                 char["reference_image_url"] = kie_client.generate_character_reference(
                     image_model, char.get("image_prompt", ""), reference_image_url=ref_url
@@ -155,8 +164,8 @@ def _run_pipeline(job_id, params, uploaded_paths):
             local_path = pages_dir / f"page-{page_num:03d}.jpg"
             _download(image_urls[idx], local_path)
             r2_key = f"books/{book_id}/pages/page-{page_num:03d}.jpg"
-            s3_url = r2_client.upload_file(str(local_path), r2_key)
-            db.add_page(book_id, page_num, s3_url, page.get("story_text", ""))
+            s3_key = r2_client.upload_file(str(local_path), r2_key)
+            db.add_page(book_id, page_num, s3_key, page.get("story_text", ""))
             pages_for_pdf.append({
                 "page_num": page_num,
                 "image_path": str(local_path),
@@ -174,10 +183,11 @@ def _run_pipeline(job_id, params, uploaded_paths):
 
         _set_progress(job_id, "final_upload", "Uploading final PDF", 0, 1)
         pdf_key = f"books/{book_id}/final/{slug}.pdf"
-        pdf_url = r2_client.upload_file(str(pdf_path), pdf_key)
+        r2_client.upload_file(str(pdf_path), pdf_key)
         _set_progress(job_id, "final_upload", "Uploading final PDF", 1, 1)
 
-        db.update_book(book_id, pdf_url=pdf_url, status="done")
+        pdf_url = _download_path(book_id)
+        db.update_book(book_id, pdf_key=pdf_key, status="done")
         db.update_job(job_id, status="done", book_id=book_id, pdf_url=pdf_url, step="Done", current=1, total=1)
         _push(job_id, {"done": True, "pdf_url": pdf_url, "book_id": book_id})
 
@@ -320,9 +330,24 @@ def job_stream(job_id):
     return Response(stream_with_context(generate()), mimetype="text/event-stream")
 
 
+def _serialize_book(book):
+    book = dict(book)
+    book["pdf_url"] = _download_path(book["book_id"]) if book.get("pdf_key") else None
+    book.pop("pdf_key", None)
+    if "pages" in book:
+        pages = []
+        for p in book["pages"]:
+            p = dict(p)
+            p["s3_url"] = _page_image_path(book["book_id"], p["page_num"]) if p.get("s3_key") else None
+            p.pop("s3_key", None)
+            pages.append(p)
+        book["pages"] = pages
+    return book
+
+
 @app.route("/api/books")
 def list_books():
-    return jsonify(db.list_books())
+    return jsonify([_serialize_book(b) for b in db.list_books()])
 
 
 @app.route("/api/books/<book_id>")
@@ -330,7 +355,26 @@ def get_book(book_id):
     book = db.get_book(book_id)
     if not book:
         return jsonify({"error": "not found"}), 404
-    return jsonify(book)
+    return jsonify(_serialize_book(book))
+
+
+@app.route("/api/books/<book_id>/download")
+def download_book(book_id):
+    book = db.get_book(book_id)
+    if not book or not book.get("pdf_key"):
+        return jsonify({"error": "not found"}), 404
+    return redirect(r2_client.presigned_url(book["pdf_key"]))
+
+
+@app.route("/api/books/<book_id>/pages/<int:page_num>/image")
+def page_image(book_id, page_num):
+    book = db.get_book(book_id)
+    if not book:
+        return jsonify({"error": "not found"}), 404
+    page = next((p for p in book["pages"] if p["page_num"] == page_num), None)
+    if not page or not page.get("s3_key"):
+        return jsonify({"error": "not found"}), 404
+    return redirect(r2_client.presigned_url(page["s3_key"]))
 
 
 @app.route("/api/books/<book_id>", methods=["DELETE"])

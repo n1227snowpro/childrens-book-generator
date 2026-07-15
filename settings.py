@@ -8,7 +8,6 @@ KEYS = [
     "R2_ACCESS_KEY",
     "R2_SECRET_KEY",
     "R2_BUCKET",
-    "R2_PUBLIC_DOMAIN",
 ]
 
 _ENV_FALLBACKS = {
@@ -18,7 +17,6 @@ _ENV_FALLBACKS = {
     "R2_ACCESS_KEY": config.R2_ACCESS_KEY,
     "R2_SECRET_KEY": config.R2_SECRET_KEY,
     "R2_BUCKET": config.R2_BUCKET,
-    "R2_PUBLIC_DOMAIN": config.R2_PUBLIC_DOMAIN,
 }
 
 
