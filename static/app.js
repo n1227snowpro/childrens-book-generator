@@ -237,8 +237,132 @@ tabButtons.forEach((btn) => {
     if (btn.dataset.tab === "settings") {
       loadSettingsStatus();
     }
+    if (btn.dataset.tab === "history") {
+      loadHistory();
+    }
   });
 });
+
+const historyList = document.getElementById("history-list");
+const historyEmpty = document.getElementById("history-empty");
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : String(str);
+  return div.innerHTML;
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch("/api/books");
+    const books = await res.json();
+    historyList.innerHTML = "";
+    historyEmpty.classList.toggle("hidden", books.length > 0);
+    for (const book of books) {
+      historyList.appendChild(renderHistoryCard(book));
+    }
+  } catch (err) {
+    historyList.innerHTML = `<p class="error">Could not load history: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderHistoryCard(book) {
+  const card = document.createElement("div");
+  card.className = "history-card";
+
+  const created = book.created_at ? new Date(book.created_at).toLocaleString() : "";
+  card.innerHTML = `
+    <div class="history-card-header">
+      <h3>${escapeHtml(book.title)}</h3>
+      <span class="status-badge status-${escapeHtml(book.status)}">${escapeHtml(book.status)}</span>
+    </div>
+    <p class="hint">${book.page_count} pages · ${escapeHtml(book.image_model || "")} · ${escapeHtml(created)}</p>
+    <div class="result-actions">
+      ${book.pdf_url ? `<a class="btn-primary" href="${book.pdf_url}" target="_blank">Download PDF</a>` : ""}
+      ${book.cover_url ? `<a class="btn-primary" href="${book.cover_url}" target="_blank">Download Cover</a>` : ""}
+      <button type="button" class="btn-secondary" data-action="toggle-pages">View Pages</button>
+      <button type="button" class="btn-secondary" data-action="delete">Delete</button>
+    </div>
+    <div class="history-pages hidden"></div>
+  `;
+
+  const pagesEl = card.querySelector(".history-pages");
+  card.querySelector('[data-action="toggle-pages"]').addEventListener("click", async () => {
+    if (!pagesEl.classList.contains("hidden")) {
+      pagesEl.classList.add("hidden");
+      return;
+    }
+    pagesEl.classList.remove("hidden");
+    if (pagesEl.dataset.loaded) return;
+
+    pagesEl.textContent = "Loading pages…";
+    try {
+      const res = await fetch(`/api/books/${book.book_id}`);
+      const detail = await res.json();
+      pagesEl.innerHTML = "";
+      for (const page of detail.pages || []) {
+        pagesEl.appendChild(renderPageThumb(book.book_id, page));
+      }
+      pagesEl.dataset.loaded = "1";
+    } catch (err) {
+      pagesEl.textContent = `Could not load pages: ${err.message}`;
+    }
+  });
+
+  card.querySelector('[data-action="delete"]').addEventListener("click", async () => {
+    if (!confirm(`Delete "${book.title}"? This cannot be undone.`)) return;
+    try {
+      await fetch(`/api/books/${book.book_id}`, { method: "DELETE" });
+      card.remove();
+      historyEmpty.classList.toggle("hidden", historyList.children.length > 0);
+    } catch (err) {
+      alert(`Failed to delete: ${err.message}`);
+    }
+  });
+
+  return card;
+}
+
+function renderPageThumb(bookId, page) {
+  const wrap = document.createElement("div");
+  wrap.className = "page-thumb" + (page.is_placeholder ? " needs-fix" : "");
+  wrap.innerHTML = `
+    <img src="${page.s3_url}" alt="Page ${page.page_num}" />
+    <div class="page-thumb-footer">
+      <span>Page ${page.page_num}${page.is_placeholder ? " ⚠" : ""}</span>
+      <button type="button" class="btn-secondary btn-small" data-action="regen">Regenerate</button>
+    </div>
+    <p class="page-thumb-status hint"></p>
+  `;
+
+  const btn = wrap.querySelector('[data-action="regen"]');
+  const statusEl = wrap.querySelector(".page-thumb-status");
+  const img = wrap.querySelector("img");
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    statusEl.textContent = "Regenerating…";
+    try {
+      const res = await fetch(`/api/books/${bookId}/pages/${page.page_num}/regenerate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Regeneration failed");
+
+      img.src = `${data.s3_url}?t=${Date.now()}`;
+      wrap.classList.remove("needs-fix");
+      statusEl.textContent = "Updated.";
+    } catch (err) {
+      statusEl.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  return wrap;
+}
 
 const settingsForm = document.getElementById("settings-form");
 const settingsSubmitBtn = document.getElementById("settings-submit-btn");

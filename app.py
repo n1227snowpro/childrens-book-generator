@@ -232,7 +232,10 @@ def _run_pipeline(job_id, params, uploaded_paths):
                 _build_placeholder_image(local_path, f"Illustration unavailable for page {page_num}")
             r2_key = f"books/{book_id}/pages/page-{page_num:03d}.jpg"
             s3_key = r2_client.upload_file(str(local_path), r2_key)
-            db.add_page(book_id, page_num, s3_key, page.get("story_text", ""))
+            db.add_page(
+                book_id, page_num, s3_key, page.get("story_text", ""),
+                image_prompt=page_prompts[idx], is_placeholder=not image_urls[idx],
+            )
             pages_for_pdf.append({
                 "page_num": page_num,
                 "image_path": str(local_path),
@@ -468,6 +471,7 @@ def _serialize_book(book):
             p = dict(p)
             p["s3_url"] = _page_image_path(book["book_id"], p["page_num"]) if p.get("s3_key") else None
             p.pop("s3_key", None)
+            p["is_placeholder"] = bool(p.get("is_placeholder"))
             pages.append(p)
         book["pages"] = pages
     return book
@@ -511,6 +515,72 @@ def page_image(book_id, page_num):
     if not page or not page.get("s3_key"):
         return jsonify({"error": "not found"}), 404
     return redirect(r2_client.presigned_url(page["s3_key"]))
+
+
+def _rebuild_book_pdf(book):
+    book_dir = BOOKS_DIR / book["book_id"]
+    pages_dir = book_dir / "pages"
+    final_dir = book_dir / "final"
+    pages_dir.mkdir(parents=True, exist_ok=True)
+    final_dir.mkdir(parents=True, exist_ok=True)
+
+    pages_for_pdf = []
+    for p in sorted(book["pages"], key=lambda x: x["page_num"]):
+        local_path = pages_dir / f"page-{p['page_num']:03d}.jpg"
+        if not local_path.exists() and p.get("s3_key"):
+            _download(r2_client.presigned_url(p["s3_key"]), local_path)
+        pages_for_pdf.append({
+            "page_num": p["page_num"],
+            "image_path": str(local_path),
+            "story_text": p.get("story_text", ""),
+        })
+
+    slug = _slugify(book["title"])
+    pdf_path = final_dir / f"{slug}.pdf"
+    pdf_builder.build_pdf(pages_for_pdf, pdf_path)
+
+    pdf_key = f"books/{book['book_id']}/final/{slug}.pdf"
+    r2_client.upload_file(str(pdf_path), pdf_key)
+    db.update_book(book["book_id"], pdf_key=pdf_key)
+
+
+@app.route("/api/books/<book_id>/pages/<int:page_num>/regenerate", methods=["POST"])
+def regenerate_page(book_id, page_num):
+    book = db.get_book(book_id)
+    if not book:
+        return jsonify({"error": "not found"}), 404
+    page = next((p for p in book["pages"] if p["page_num"] == page_num), None)
+    if not page:
+        return jsonify({"error": "page not found"}), 404
+
+    data = request.get_json(force=True, silent=True) or {}
+    image_model = data.get("image_model") or book.get("image_model") or kie_client.DEFAULT_MODEL
+    prompt = (data.get("prompt") or page.get("image_prompt") or "").strip()
+
+    if image_model not in kie_client.MODELS:
+        return jsonify({"error": f"Unknown image_model: {image_model}"}), 400
+    if not prompt:
+        return jsonify({"error": "No prompt available for this page; provide one"}), 400
+
+    try:
+        image_url = kie_client.generate_page_image(image_model, prompt)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+    book_dir = BOOKS_DIR / book_id
+    pages_dir = book_dir / "pages"
+    pages_dir.mkdir(parents=True, exist_ok=True)
+    local_path = pages_dir / f"page-{page_num:03d}.jpg"
+    _download(image_url, local_path)
+
+    r2_key = f"books/{book_id}/pages/page-{page_num:03d}.jpg"
+    r2_client.upload_file(str(local_path), r2_key)
+    db.update_page(book_id, page_num, s3_key=r2_key, image_prompt=prompt, is_placeholder=0)
+
+    book = db.get_book(book_id)
+    _rebuild_book_pdf(book)
+
+    return jsonify({"status": "ok", "s3_url": _page_image_path(book_id, page_num)})
 
 
 @app.route("/api/books/<book_id>", methods=["DELETE"])

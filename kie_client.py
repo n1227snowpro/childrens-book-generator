@@ -30,13 +30,13 @@ MODELS = {
         "label": "Nano Banana",
         "provider": "Google",
         "price_per_image": 0.02,
-        "note": "Cheapest option, strong character consistency across pages",
+        "note": "Default — cheapest option, strong character consistency across pages",
     },
     "flux-kontext-pro": {
         "label": "Flux Kontext Pro",
         "provider": "Black Forest Labs",
         "price_per_image": 0.025,
-        "note": "Default — balanced quality and cost",
+        "note": "Balanced quality and cost",
     },
     "flux-kontext-max": {
         "label": "Flux Kontext Max",
@@ -52,7 +52,7 @@ MODELS = {
     },
 }
 
-DEFAULT_MODEL = "flux-kontext-pro"
+DEFAULT_MODEL = "nano-banana"
 
 # Widest aspect ratio each model actually supports (verified against docs.kie.ai
 # per-model parameter lists), used for wraparound cover art.

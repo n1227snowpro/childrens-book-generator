@@ -17,6 +17,7 @@
 
   <nav class="tabs">
     <button type="button" class="tab-btn active" data-tab="generate">Generate</button>
+    <button type="button" class="tab-btn" data-tab="history">History</button>
     <button type="button" class="tab-btn" data-tab="settings">Settings</button>
   </nav>
 
@@ -106,6 +107,11 @@
       <p class="hint" id="cover-dimensions"></p>
       <div id="thumbnails" class="thumbnails"></div>
     </div>
+    </section>
+
+    <section id="tab-history" class="tab-panel">
+      <p class="hint" id="history-empty">No books generated yet.</p>
+      <div id="history-list"></div>
     </section>
 
     <section id="tab-settings" class="tab-panel">

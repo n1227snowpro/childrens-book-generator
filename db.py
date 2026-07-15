@@ -80,11 +80,21 @@ def init_db():
                 book_id TEXT NOT NULL,
                 page_num INTEGER NOT NULL,
                 s3_key TEXT,
-                story_text TEXT
+                story_text TEXT,
+                image_prompt TEXT,
+                is_placeholder INTEGER DEFAULT 0
             )
         """)
         try:
             conn.execute("ALTER TABLE pages RENAME COLUMN s3_url TO s3_key")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE pages ADD COLUMN image_prompt TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE pages ADD COLUMN is_placeholder INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
             pass
         conn.execute("""
@@ -157,12 +167,30 @@ def update_book(book_id, **fields):
         conn.execute(f"UPDATE books SET {cols} WHERE book_id = ?", values)
 
 
-def add_page(book_id, page_num, s3_key, story_text):
+def add_page(book_id, page_num, s3_key, story_text, image_prompt=None, is_placeholder=False):
     with _lock, get_conn() as conn:
         conn.execute(
-            "INSERT INTO pages (book_id, page_num, s3_key, story_text) VALUES (?, ?, ?, ?)",
-            (book_id, page_num, s3_key, story_text),
+            "INSERT INTO pages (book_id, page_num, s3_key, story_text, image_prompt, is_placeholder) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (book_id, page_num, s3_key, story_text, image_prompt, int(is_placeholder)),
         )
+
+
+def update_page(book_id, page_num, **fields):
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    values = list(fields.values()) + [book_id, page_num]
+    with _lock, get_conn() as conn:
+        conn.execute(f"UPDATE pages SET {cols} WHERE book_id = ? AND page_num = ?", values)
+
+
+def get_page(book_id, page_num):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM pages WHERE book_id = ? AND page_num = ?", (book_id, page_num)
+        ).fetchone()
+        return dict(row) if row else None
 
 
 def list_books():
@@ -178,7 +206,8 @@ def get_book(book_id):
             return None
         book = dict(book)
         pages = conn.execute(
-            "SELECT page_num, s3_key, story_text FROM pages WHERE book_id = ? ORDER BY page_num", (book_id,)
+            "SELECT page_num, s3_key, story_text, image_prompt, is_placeholder FROM pages "
+            "WHERE book_id = ? ORDER BY page_num", (book_id,)
         ).fetchall()
         book["pages"] = [dict(p) for p in pages]
         return book
