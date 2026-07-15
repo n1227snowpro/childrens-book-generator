@@ -111,29 +111,53 @@ def _run_pipeline(job_id, params, uploaded_paths):
         book_dir = BOOKS_DIR / book_id
         pages_dir = book_dir / "pages"
         final_dir = book_dir / "final"
+        char_refs_dir = book_dir / "character-refs"
         pages_dir.mkdir(parents=True, exist_ok=True)
         final_dir.mkdir(parents=True, exist_ok=True)
+        char_refs_dir.mkdir(parents=True, exist_ok=True)
 
         characters = blueprint.get("characters", [])
         char_visual_descriptions = []
         _set_progress(job_id, "characters", "Generating character references", 0, max(len(characters), 1))
         for i, char in enumerate(characters):
-            ref_url = None
+            name = char.get("name") or f"Character {i + 1}"
+
+            uploaded_ref_url = None
             if i < len(uploaded_paths):
                 key = f"books/{book_id}/character-refs/upload-{i}{Path(uploaded_paths[i]).suffix}"
                 r2_client.upload_file(uploaded_paths[i], key)
-                ref_url = r2_client.presigned_url(key)
-            try:
-                char["reference_image_url"] = kie_client.generate_character_reference(
-                    image_model, char.get("image_prompt", ""), reference_image_url=ref_url
-                )
-            except Exception:
-                char["reference_image_url"] = None
+                uploaded_ref_url = r2_client.presigned_url(key)
+
+            saved = None if uploaded_ref_url else db.get_character_by_name(name)
+
+            if saved and saved.get("s3_key"):
+                char["s3_key"] = saved["s3_key"]
+                step_text = f"Reusing saved reference for {name} ({i + 1}/{len(characters)})"
+            else:
+                try:
+                    kie_url = kie_client.generate_character_reference(
+                        image_model, char.get("image_prompt", ""), reference_image_url=uploaded_ref_url
+                    )
+                    local_path = char_refs_dir / f"char-{i}.jpg"
+                    _download(kie_url, local_path)
+                    s3_key = f"books/{book_id}/character-refs/{_slugify(name)}.jpg"
+                    r2_client.upload_file(str(local_path), s3_key)
+                    char["s3_key"] = s3_key
+                    db.upsert_character(
+                        name=name,
+                        visual_description=char.get("visual_description", ""),
+                        personality=char.get("personality", ""),
+                        role=char.get("role", ""),
+                        image_prompt=char.get("image_prompt", ""),
+                        s3_key=s3_key,
+                        image_model=image_model,
+                    )
+                except Exception:
+                    char["s3_key"] = None
+                step_text = f"Generating character reference {i + 1}/{len(characters)}"
+
             char_visual_descriptions.append(f"{char.get('name', '')}: {char.get('visual_description', '')}")
-            _set_progress(
-                job_id, "characters", f"Generating character reference {i + 1}/{len(characters)}",
-                i + 1, len(characters),
-            )
+            _set_progress(job_id, "characters", step_text, i + 1, len(characters))
 
         art_style = blueprint.get("art_style", "")
         char_desc_joined = "; ".join(char_visual_descriptions)
@@ -390,6 +414,41 @@ def delete_book(book_id):
     if book_dir.exists():
         shutil.rmtree(book_dir, ignore_errors=True)
     db.delete_book(book_id)
+    return jsonify({"status": "deleted"})
+
+
+def _serialize_character(char):
+    char = dict(char)
+    char["image_url"] = f"/api/characters/{char['id']}/image" if char.get("s3_key") else None
+    char.pop("s3_key", None)
+    char.pop("name_key", None)
+    return char
+
+
+@app.route("/api/characters")
+def list_characters():
+    return jsonify([_serialize_character(c) for c in db.list_characters()])
+
+
+@app.route("/api/characters/<int:character_id>/image")
+def character_image(character_id):
+    char = db.get_character(character_id)
+    if not char or not char.get("s3_key"):
+        return jsonify({"error": "not found"}), 404
+    return redirect(r2_client.presigned_url(char["s3_key"]))
+
+
+@app.route("/api/characters/<int:character_id>", methods=["DELETE"])
+def delete_character(character_id):
+    char = db.get_character(character_id)
+    if not char:
+        return jsonify({"error": "not found"}), 404
+    if char.get("s3_key"):
+        try:
+            r2_client.delete_prefix(char["s3_key"])
+        except Exception:
+            pass
+    db.delete_character(character_id)
     return jsonify({"status": "deleted"})
 
 

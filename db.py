@@ -88,6 +88,22 @@ def init_db():
                 value TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS characters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                name_key TEXT NOT NULL,
+                visual_description TEXT,
+                personality TEXT,
+                role TEXT,
+                image_prompt TEXT,
+                s3_key TEXT,
+                image_model TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_characters_name_key ON characters(name_key)")
         _repair_legacy_object_urls(conn)
 
 
@@ -182,3 +198,52 @@ def set_setting(key, value):
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
+
+
+def _name_key(name):
+    return (name or "").strip().lower()
+
+
+def get_character_by_name(name):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM characters WHERE name_key = ?", (_name_key(name),)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def upsert_character(name, visual_description, personality, role, image_prompt, s3_key, image_model):
+    now = _now()
+    name_key = _name_key(name)
+    with _lock, get_conn() as conn:
+        existing = conn.execute("SELECT id FROM characters WHERE name_key = ?", (name_key,)).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE characters SET name = ?, visual_description = ?, personality = ?, role = ?, "
+                "image_prompt = ?, s3_key = ?, image_model = ?, updated_at = ? WHERE id = ?",
+                (name, visual_description, personality, role, image_prompt, s3_key, image_model, now, existing["id"]),
+            )
+            return existing["id"]
+        cursor = conn.execute(
+            "INSERT INTO characters (name, name_key, visual_description, personality, role, "
+            "image_prompt, s3_key, image_model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, name_key, visual_description, personality, role, image_prompt, s3_key, image_model, now, now),
+        )
+        return cursor.lastrowid
+
+
+def list_characters():
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM characters ORDER BY updated_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_character(character_id):
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM characters WHERE id = ?", (character_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def delete_character(character_id):
+    with _lock, get_conn() as conn:
+        conn.execute("DELETE FROM characters WHERE id = ?", (character_id,))
