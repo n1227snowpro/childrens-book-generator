@@ -7,6 +7,8 @@ const progressPct = document.getElementById("progress-pct");
 const progressError = document.getElementById("progress-error");
 const resultPanel = document.getElementById("result-panel");
 const pdfLink = document.getElementById("pdf-link");
+const coverLink = document.getElementById("cover-link");
+const coverDimensionsEl = document.getElementById("cover-dimensions");
 const thumbnails = document.getElementById("thumbnails");
 const imageModelSelect = document.getElementById("image_model");
 const imageModelNote = document.getElementById("image_model_note");
@@ -108,7 +110,7 @@ function listenToJob(jobId) {
       source.close();
       submitBtn.disabled = false;
       if (data.pdf_url) {
-        onComplete(data.pdf_url, data.book_id);
+        onComplete(data.pdf_url, data.book_id, data.cover_url);
       }
     }
   };
@@ -119,17 +121,25 @@ function listenToJob(jobId) {
   };
 }
 
-async function onComplete(pdfUrl, bookId) {
+async function onComplete(pdfUrl, bookId, coverUrl) {
   progressFill.style.width = "100%";
   progressPct.textContent = "100%";
   resultPanel.classList.remove("hidden");
   pdfLink.href = pdfUrl;
   thumbnails.innerHTML = "";
 
+  if (coverUrl) {
+    coverLink.href = coverUrl;
+    coverLink.classList.remove("hidden");
+  } else {
+    coverLink.classList.add("hidden");
+  }
+
   if (bookId) {
     try {
       const res = await fetch(`/api/books/${bookId}`);
       const book = await res.json();
+
       const preview = (book.pages || []).slice(0, 3);
       for (const page of preview) {
         const img = document.createElement("img");
@@ -137,8 +147,17 @@ async function onComplete(pdfUrl, bookId) {
         img.alt = `Page ${page.page_num}`;
         thumbnails.appendChild(img);
       }
+
+      const dims = book.cover_dimensions;
+      if (dims) {
+        const compliance = dims.kdp_hardcover_compliant
+          ? "meets KDP's 76-550 page hardcover requirement"
+          : "below KDP's 76-page hardcover minimum — for preview only";
+        coverDimensionsEl.textContent =
+          `Cover size: ${dims.full_width_in}" × ${dims.full_height_in}" (spine ${dims.spine_width_in}") — ${compliance}`;
+      }
     } catch (err) {
-      // thumbnails are a nice-to-have; ignore failures
+      // thumbnails/dimensions are a nice-to-have; ignore failures
     }
   }
 }

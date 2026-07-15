@@ -40,6 +40,15 @@ MODELS = {
 
 DEFAULT_MODEL = "flux-kontext-pro"
 
+# Widest aspect ratio each model actually supports (verified against docs.kie.ai
+# per-model parameter lists), used for wraparound cover art.
+_COVER_ASPECT_RATIO = {
+    "nano-banana": "3:2",
+    "flux-kontext-pro": "16:9",
+    "flux-kontext-max": "16:9",
+    "gpt-image-2": "3:2",
+}
+
 
 def _headers():
     return {
@@ -163,11 +172,10 @@ def _generate_gpt_image_2(prompt, reference_image_urls, aspect_ratio):
     return _poll_unified(task_id)
 
 
-def generate_image(model_id, prompt, reference_image_url=None, square=True):
+def generate_image(model_id, prompt, reference_image_url=None, aspect_ratio="1:1"):
     if model_id not in MODELS:
         raise ValueError(f"Unknown image model: {model_id}")
 
-    aspect_ratio = "1:1" if square else "3:4"
     reference_image_urls = [reference_image_url] if reference_image_url else None
 
     if model_id == "nano-banana":
@@ -179,11 +187,16 @@ def generate_image(model_id, prompt, reference_image_url=None, square=True):
 
 
 def generate_character_reference(model_id, prompt, reference_image_url=None):
-    return generate_image(model_id, prompt, reference_image_url=reference_image_url, square=True)
+    return generate_image(model_id, prompt, reference_image_url=reference_image_url, aspect_ratio="1:1")
 
 
 def generate_page_image(model_id, prompt):
-    return generate_image(model_id, prompt, reference_image_url=None, square=False)
+    return generate_image(model_id, prompt, reference_image_url=None, aspect_ratio="3:4")
+
+
+def generate_cover_image(model_id, prompt, reference_image_url=None):
+    aspect_ratio = _COVER_ASPECT_RATIO.get(model_id, "3:2")
+    return generate_image(model_id, prompt, reference_image_url=reference_image_url, aspect_ratio=aspect_ratio)
 
 
 def generate_pages_concurrent(model_id, page_prompts, max_workers=5, on_complete=None):

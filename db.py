@@ -58,11 +58,16 @@ def init_db():
                 pdf_key TEXT,
                 created_at TEXT NOT NULL,
                 status TEXT NOT NULL,
-                image_model TEXT
+                image_model TEXT,
+                cover_key TEXT
             )
         """)
         try:
             conn.execute("ALTER TABLE books ADD COLUMN image_model TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE books ADD COLUMN cover_key TEXT")
         except sqlite3.OperationalError:
             pass
         try:

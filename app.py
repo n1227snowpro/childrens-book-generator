@@ -16,6 +16,7 @@ from flask import Flask, Response, jsonify, redirect, render_template, request, 
 from flask_cors import CORS
 
 import claude_client
+import cover_builder
 import db
 import kie_client
 import pdf_builder
@@ -34,10 +35,11 @@ _queues_lock = threading.Lock()
 STAGE_BOUNDS = {
     "blueprint": (0, 5),
     "characters": (5, 15),
-    "pages": (15, 80),
-    "page_uploads": (80, 90),
-    "pdf": (90, 95),
-    "final_upload": (95, 100),
+    "pages": (15, 75),
+    "page_uploads": (75, 85),
+    "pdf": (85, 90),
+    "cover": (90, 97),
+    "final_upload": (97, 100),
 }
 
 
@@ -82,6 +84,10 @@ def _download(url, dest_path):
 
 def _download_path(book_id):
     return f"/api/books/{book_id}/download"
+
+
+def _cover_path(book_id):
+    return f"/api/books/{book_id}/cover"
 
 
 def _page_image_path(book_id, page_num):
@@ -205,15 +211,45 @@ def _run_pipeline(job_id, params, uploaded_paths):
         pdf_builder.build_pdf(pages_for_pdf, pdf_path)
         _set_progress(job_id, "pdf", "Compiling PDF", 1, 1)
 
+        _set_progress(job_id, "cover", "Generating cover art", 0, 1)
+        cover_key = None
+        try:
+            primary_char = characters[0] if characters else None
+            cover_ref_url = None
+            if primary_char and primary_char.get("s3_key"):
+                cover_ref_url = r2_client.presigned_url(primary_char["s3_key"])
+
+            cover_prompt = (
+                f"{art_style} Wraparound children's book cover illustration for '{title}'. "
+                f"Theme: {params['theme']}. Featuring: {char_desc_joined}. "
+                "Leave open, uncluttered space on the right-hand side for a title."
+            )
+            cover_image_url = kie_client.generate_cover_image(
+                image_model, cover_prompt, reference_image_url=cover_ref_url
+            )
+            cover_image_path = final_dir / "cover-art.jpg"
+            _download(cover_image_url, cover_image_path)
+
+            cover_pdf_path = final_dir / f"{slug}-cover.pdf"
+            cover_builder.build_cover_pdf(
+                str(cover_image_path), title, title, params["page_count"], cover_pdf_path
+            )
+            cover_key = f"books/{book_id}/final/{slug}-cover.pdf"
+            r2_client.upload_file(str(cover_pdf_path), cover_key)
+        except Exception:
+            cover_key = None
+        _set_progress(job_id, "cover", "Generating cover art", 1, 1)
+
         _set_progress(job_id, "final_upload", "Uploading final PDF", 0, 1)
         pdf_key = f"books/{book_id}/final/{slug}.pdf"
         r2_client.upload_file(str(pdf_path), pdf_key)
         _set_progress(job_id, "final_upload", "Uploading final PDF", 1, 1)
 
         pdf_url = _download_path(book_id)
-        db.update_book(book_id, pdf_key=pdf_key, status="done")
+        cover_url = _cover_path(book_id) if cover_key else None
+        db.update_book(book_id, pdf_key=pdf_key, cover_key=cover_key, status="done")
         db.update_job(job_id, status="done", book_id=book_id, pdf_url=pdf_url, step="Done", current=1, total=1)
-        _push(job_id, {"done": True, "pdf_url": pdf_url, "book_id": book_id})
+        _push(job_id, {"done": True, "pdf_url": pdf_url, "cover_url": cover_url, "book_id": book_id})
 
     except Exception as e:
         db.update_job(job_id, status="error", error=str(e))
@@ -358,6 +394,9 @@ def _serialize_book(book):
     book = dict(book)
     book["pdf_url"] = _download_path(book["book_id"]) if book.get("pdf_key") else None
     book.pop("pdf_key", None)
+    book["cover_url"] = _cover_path(book["book_id"]) if book.get("cover_key") else None
+    book.pop("cover_key", None)
+    book["cover_dimensions"] = cover_builder.calculate_dimensions(book["page_count"])
     if "pages" in book:
         pages = []
         for p in book["pages"]:
@@ -388,6 +427,14 @@ def download_book(book_id):
     if not book or not book.get("pdf_key"):
         return jsonify({"error": "not found"}), 404
     return redirect(r2_client.presigned_url(book["pdf_key"]))
+
+
+@app.route("/api/books/<book_id>/cover")
+def download_cover(book_id):
+    book = db.get_book(book_id)
+    if not book or not book.get("cover_key"):
+        return jsonify({"error": "not found"}), 404
+    return redirect(r2_client.presigned_url(book["cover_key"]))
 
 
 @app.route("/api/books/<book_id>/pages/<int:page_num>/image")

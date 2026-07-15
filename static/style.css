@@ -128,6 +128,14 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 #result-panel h2 { margin-bottom: 16px; }
 
+.result-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+#cover-dimensions { margin-top: 12px; }
+
 .thumbnails {
   display: flex;
   gap: 12px;
