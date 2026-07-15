@@ -11,7 +11,9 @@ def _client():
     return anthropic.Anthropic(api_key=settings.get("ANTHROPIC_API_KEY"))
 
 
-def _build_prompt(book_title, target_age, theme, main_characters, art_style_preference, page_count):
+def _build_prompt(
+    book_title, target_age, theme, main_characters, art_style_preference, page_count, content_instruction=""
+):
     if page_count >= 5:
         intro = max(1, round(page_count * 0.10))
         rising = max(1, round(page_count * 0.42))
@@ -31,6 +33,13 @@ def _build_prompt(book_title, target_age, theme, main_characters, art_style_pref
             "full story arc."
         )
 
+    content_block = (
+        f"\nDetailed content instructions (follow these closely for plot, tone, specific scenes, "
+        f"and any message the story should convey):\n{content_instruction}\n"
+        if content_instruction
+        else ""
+    )
+
     return f"""You are a professional children's book author and illustrator art director.
 
 Create a complete blueprint for an illustrated children's book with these inputs:
@@ -40,7 +49,7 @@ Create a complete blueprint for an illustrated children's book with these inputs
 - Main characters: {main_characters}
 - Art style preference: {art_style_preference}
 - Total pages: {page_count}
-
+{content_block}
 {arc_guidance}
 
 Return a single raw JSON object with NO markdown formatting, NO code fences, and NO commentary before or after it. The JSON must have exactly this shape:
@@ -84,8 +93,12 @@ def _extract_json(text):
     return json.loads(text[start:end + 1])
 
 
-def generate_blueprint(book_title, target_age, theme, main_characters, art_style_preference, page_count):
-    prompt = _build_prompt(book_title, target_age, theme, main_characters, art_style_preference, page_count)
+def generate_blueprint(
+    book_title, target_age, theme, main_characters, art_style_preference, page_count, content_instruction=""
+):
+    prompt = _build_prompt(
+        book_title, target_age, theme, main_characters, art_style_preference, page_count, content_instruction
+    )
     client = _client()
     response = client.messages.create(
         model=MODEL,

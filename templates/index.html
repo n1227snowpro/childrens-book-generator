@@ -22,6 +22,13 @@
 
   <main>
     <section id="tab-generate" class="tab-panel active">
+    <div class="auto-generate-box">
+      <label for="auto_idea">Auto Generate from an idea</label>
+      <textarea id="auto_idea" rows="2" placeholder="A brave little turtle who's scared of the ocean and learns to swim with her friends"></textarea>
+      <button type="button" id="auto-generate-btn">Auto Generate</button>
+      <p class="hint" id="auto-generate-status"></p>
+    </div>
+
     <form id="book-form">
       <div class="field">
         <label for="book_title">Book Title</label>
@@ -40,6 +47,12 @@
       <div class="field">
         <label for="theme">Theme</label>
         <input type="text" id="theme" name="theme" required placeholder="Friendship and courage in an enchanted forest" />
+      </div>
+
+      <div class="field">
+        <label for="content_instruction">Content Instruction</label>
+        <textarea id="content_instruction" name="content_instruction" rows="4" placeholder="Detailed plot, key scenes in order, tone, and any lesson the story should convey"></textarea>
+        <p class="hint">Optional — the more detail here, the more closely the story follows your plot</p>
       </div>
 
       <div class="field">
@@ -108,6 +121,13 @@
           <label for="KIE_AI_API_KEY">KIE.ai API Key</label>
           <input type="password" id="KIE_AI_API_KEY" name="KIE_AI_API_KEY" placeholder="Enter your KIE.ai key" autocomplete="off" />
           <p class="hint setting-status" data-key="KIE_AI_API_KEY">Checking…</p>
+        </div>
+
+        <div class="field">
+          <label for="GEMINI_API_KEY">Gemini API Key</label>
+          <input type="password" id="GEMINI_API_KEY" name="GEMINI_API_KEY" placeholder="Enter your Gemini key" autocomplete="off" />
+          <p class="hint setting-status" data-key="GEMINI_API_KEY">Checking…</p>
+          <p class="hint">Powers the "Auto Generate" button on the Generate tab</p>
         </div>
 
         <h2 class="settings-heading">Cloudflare R2 Storage</h2>

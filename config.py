@@ -23,6 +23,7 @@ PORT = int(os.environ.get("PORT", 9005))
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 KIE_AI_API_KEY = os.environ.get("KIE_AI_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
 R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")

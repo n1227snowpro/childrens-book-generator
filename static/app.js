@@ -59,6 +59,55 @@ imageModelSelect.addEventListener("change", updateImageModelNote);
 pageCountInput.addEventListener("input", updateCostEstimate);
 loadImageModels();
 
+const autoIdeaInput = document.getElementById("auto_idea");
+const autoGenerateBtn = document.getElementById("auto-generate-btn");
+const autoGenerateStatus = document.getElementById("auto-generate-status");
+const targetAgeSelect = document.getElementById("target_age");
+const contentInstructionInput = document.getElementById("content_instruction");
+const mainCharactersInput = document.getElementById("main_characters");
+const artStylePreferenceInput = document.getElementById("art_style_preference");
+const bookTitleInput = document.getElementById("book_title");
+const themeInput = document.getElementById("theme");
+
+autoGenerateBtn.addEventListener("click", async () => {
+  const idea = autoIdeaInput.value.trim();
+  if (!idea) {
+    autoGenerateStatus.textContent = "Enter a book idea first.";
+    autoGenerateStatus.classList.add("error");
+    return;
+  }
+
+  autoGenerateBtn.disabled = true;
+  autoGenerateStatus.classList.remove("error");
+  autoGenerateStatus.textContent = "Generating with Gemini…";
+
+  try {
+    const res = await fetch("/api/books/auto-generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idea, target_age: targetAgeSelect.value }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || "Auto generation failed");
+    }
+
+    bookTitleInput.value = data.book_title || "";
+    themeInput.value = data.theme || "";
+    contentInstructionInput.value = data.content_instruction || "";
+    mainCharactersInput.value = data.main_characters || "";
+    artStylePreferenceInput.value = data.art_style_preference || "";
+
+    autoGenerateStatus.textContent = "Fields filled in below — review and adjust as needed.";
+  } catch (err) {
+    autoGenerateStatus.textContent = err.message;
+    autoGenerateStatus.classList.add("error");
+  } finally {
+    autoGenerateBtn.disabled = false;
+  }
+});
+
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
 

@@ -18,6 +18,7 @@ from flask_cors import CORS
 import claude_client
 import cover_builder
 import db
+import gemini_client
 import kie_client
 import pdf_builder
 import r2_client
@@ -108,6 +109,7 @@ def _run_pipeline(job_id, params, uploaded_paths):
             params["main_characters"],
             params["art_style_preference"],
             params["page_count"],
+            params["content_instruction"],
         )
         _set_progress(job_id, "blueprint", "Generating blueprint", 1, 1)
 
@@ -293,11 +295,29 @@ def image_models():
     return jsonify({"models": kie_client.MODELS, "default": kie_client.DEFAULT_MODEL})
 
 
+@app.route("/api/books/auto-generate", methods=["POST"])
+def auto_generate_fields():
+    data = request.get_json(force=True, silent=True) or {}
+    idea = (data.get("idea") or "").strip()
+    target_age = data.get("target_age", "4-8")
+
+    if not idea:
+        return jsonify({"error": "idea is required"}), 400
+
+    try:
+        fields = gemini_client.generate_book_fields(idea, target_age)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+    return jsonify(fields)
+
+
 @app.route("/api/books/generate", methods=["POST"])
 def generate_book():
     book_title = request.form.get("book_title", "").strip()
     target_age = request.form.get("target_age", "4-8")
     theme = request.form.get("theme", "").strip()
+    content_instruction = request.form.get("content_instruction", "").strip()
     main_characters = request.form.get("main_characters", "").strip()
     art_style_preference = request.form.get("art_style_preference", "").strip()
     image_model = request.form.get("image_model", kie_client.DEFAULT_MODEL).strip()
@@ -331,6 +351,7 @@ def generate_book():
         book_title=book_title,
         target_age=target_age,
         theme=theme,
+        content_instruction=content_instruction,
         main_characters=main_characters,
         art_style_preference=art_style_preference,
         page_count=page_count,

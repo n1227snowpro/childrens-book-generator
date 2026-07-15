@@ -200,3 +200,21 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 .saved-msg.error { color: #c0392b; }
+
+.auto-generate-box {
+  background: var(--surface);
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 28px;
+}
+
+.auto-generate-box label {
+  color: var(--accent-dark);
+}
+
+.auto-generate-box textarea {
+  margin-bottom: 10px;
+}
+
+#auto-generate-status.error { color: #c0392b; }
