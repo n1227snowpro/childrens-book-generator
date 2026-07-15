@@ -1,0 +1,39 @@
+services:
+  childrens-book-generator:
+    build: .
+    image: childrens-book-generator:latest
+    container_name: childrens-book-generator
+    restart: unless-stopped
+    networks:
+      - n8n_default
+    volumes:
+      - childrens_book_data:/app/data
+    environment:
+      DATA_DIR: /app/data
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      KIE_AI_API_KEY: ${KIE_AI_API_KEY}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID}
+      R2_ACCESS_KEY: ${R2_ACCESS_KEY}
+      R2_SECRET_KEY: ${R2_SECRET_KEY}
+      R2_BUCKET: ${R2_BUCKET}
+      R2_PUBLIC_DOMAIN: ${R2_PUBLIC_DOMAIN}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.childrensbook.rule=Host(`childrensbook.srv1213330.hstgr.cloud`)
+      - traefik.http.routers.childrensbook.tls=true
+      - traefik.http.routers.childrensbook.entrypoints=web,websecure
+      - traefik.http.routers.childrensbook.tls.certresolver=mytlschallenge
+      - traefik.http.services.childrensbook.loadbalancer.server.port=9005
+      - traefik.http.middlewares.childrensbook-headers.headers.SSLRedirect=true
+      - traefik.http.middlewares.childrensbook-headers.headers.STSSeconds=315360000
+      - traefik.http.middlewares.childrensbook-headers.headers.forceSTSHeader=true
+      - traefik.http.routers.childrensbook.middlewares=childrensbook-headers@docker
+      - traefik.docker.network=n8n_default
+
+networks:
+  n8n_default:
+    external: true
+
+volumes:
+  childrens_book_data:
+    driver: local

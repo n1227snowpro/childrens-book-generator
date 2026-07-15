@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Children's Book Generator</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header>
+    <div class="logo">📖</div>
+    <div>
+      <h1>Children's Book Generator</h1>
+      <p>AI-illustrated, print-ready hardcover books</p>
+    </div>
+  </header>
+
+  <main>
+    <form id="book-form">
+      <div class="field">
+        <label for="book_title">Book Title</label>
+        <input type="text" id="book_title" name="book_title" required placeholder="The Adventures of Luna the Fox" />
+      </div>
+
+      <div class="field">
+        <label for="target_age">Target Age</label>
+        <select id="target_age" name="target_age">
+          <option value="2-4">2-4</option>
+          <option value="4-8" selected>4-8</option>
+          <option value="8-12">8-12</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="theme">Theme</label>
+        <input type="text" id="theme" name="theme" required placeholder="Friendship and courage in an enchanted forest" />
+      </div>
+
+      <div class="field">
+        <label for="main_characters">Characters</label>
+        <textarea id="main_characters" name="main_characters" rows="3" placeholder="Luna — a curious young fox with silver fur; Oskar — her loyal owl friend"></textarea>
+      </div>
+
+      <div class="field">
+        <label for="art_style_preference">Art Style</label>
+        <textarea id="art_style_preference" name="art_style_preference" rows="2" placeholder="Warm watercolor storybook illustration, soft pastel palette"></textarea>
+      </div>
+
+      <div class="field">
+        <label for="page_count">Page Count</label>
+        <input type="number" id="page_count" name="page_count" min="4" max="150" value="75" />
+        <p class="hint">Set to 5-10 for a quick test</p>
+      </div>
+
+      <div class="field">
+        <label for="character_images">Character Reference Images (optional)</label>
+        <input type="file" id="character_images" name="character_images" multiple accept="image/*" />
+        <p class="hint">Upload reference photos for your main characters (optional)</p>
+      </div>
+
+      <button type="submit" id="submit-btn">Generate Book</button>
+    </form>
+
+    <div id="progress-panel" class="hidden">
+      <h2 id="progress-step">Starting…</h2>
+      <div class="progress-bar">
+        <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
+      </div>
+      <p id="progress-pct">0%</p>
+      <p id="progress-error" class="error hidden"></p>
+    </div>
+
+    <div id="result-panel" class="hidden">
+      <h2>Your book is ready!</h2>
+      <a id="pdf-link" class="btn-primary" href="#" target="_blank">Download PDF</a>
+      <div id="thumbnails" class="thumbnails"></div>
+    </div>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
