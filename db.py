@@ -37,9 +37,14 @@ def init_db():
                 page_count INTEGER NOT NULL,
                 pdf_url TEXT,
                 created_at TEXT NOT NULL,
-                status TEXT NOT NULL
+                status TEXT NOT NULL,
+                image_model TEXT
             )
         """)
+        try:
+            conn.execute("ALTER TABLE books ADD COLUMN image_model TEXT")
+        except sqlite3.OperationalError:
+            pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS pages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,11 +89,12 @@ def get_job(job_id):
         return dict(row) if row else None
 
 
-def create_book(book_id, title, page_count, status="running"):
+def create_book(book_id, title, page_count, status="running", image_model=None):
     with _lock, get_conn() as conn:
         conn.execute(
-            "INSERT INTO books (book_id, title, page_count, pdf_url, created_at, status) VALUES (?, ?, ?, NULL, ?, ?)",
-            (book_id, title, page_count, _now(), status),
+            "INSERT INTO books (book_id, title, page_count, pdf_url, created_at, status, image_model) "
+            "VALUES (?, ?, ?, NULL, ?, ?, ?)",
+            (book_id, title, page_count, _now(), status, image_model),
         )
 
 

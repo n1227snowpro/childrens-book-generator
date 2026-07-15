@@ -8,6 +8,54 @@ const progressError = document.getElementById("progress-error");
 const resultPanel = document.getElementById("result-panel");
 const pdfLink = document.getElementById("pdf-link");
 const thumbnails = document.getElementById("thumbnails");
+const imageModelSelect = document.getElementById("image_model");
+const imageModelNote = document.getElementById("image_model_note");
+const pageCountInput = document.getElementById("page_count");
+const costEstimate = document.getElementById("cost-estimate");
+
+let imageModels = {};
+
+async function loadImageModels() {
+  try {
+    const res = await fetch("/api/image-models");
+    const data = await res.json();
+    imageModels = data.models || {};
+
+    imageModelSelect.innerHTML = "";
+    for (const [id, info] of Object.entries(imageModels)) {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = `${info.label} (${info.provider}) — $${info.price_per_image.toFixed(3)}/image`;
+      if (id === data.default) opt.selected = true;
+      imageModelSelect.appendChild(opt);
+    }
+    updateImageModelNote();
+  } catch (err) {
+    imageModelNote.textContent = "Could not load model list.";
+  }
+}
+
+function updateImageModelNote() {
+  const info = imageModels[imageModelSelect.value];
+  imageModelNote.textContent = info ? info.note : "";
+  updateCostEstimate();
+}
+
+function updateCostEstimate() {
+  const info = imageModels[imageModelSelect.value];
+  const pages = parseInt(pageCountInput.value, 10) || 0;
+  if (!info || !pages) {
+    costEstimate.textContent = "";
+    return;
+  }
+  const estimatedImages = pages + 2; // pages plus ~2 character references
+  const cost = (estimatedImages * info.price_per_image).toFixed(2);
+  costEstimate.textContent = `Estimated illustration cost: ~$${cost} (${pages} pages + character refs)`;
+}
+
+imageModelSelect.addEventListener("change", updateImageModelNote);
+pageCountInput.addEventListener("input", updateCostEstimate);
+loadImageModels();
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();

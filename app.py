@@ -82,6 +82,7 @@ def _download(url, dest_path):
 
 def _run_pipeline(job_id, params, uploaded_paths):
     book_id = str(uuid.uuid4())
+    image_model = params["image_model"]
     try:
         db.update_job(job_id, status="running")
         _set_progress(job_id, "blueprint", "Generating blueprint", 0, 1)
@@ -97,7 +98,7 @@ def _run_pipeline(job_id, params, uploaded_paths):
         _set_progress(job_id, "blueprint", "Generating blueprint", 1, 1)
 
         title = blueprint.get("book_title") or params["book_title"]
-        db.create_book(book_id, title, params["page_count"], status="running")
+        db.create_book(book_id, title, params["page_count"], status="running", image_model=image_model)
 
         book_dir = BOOKS_DIR / book_id
         pages_dir = book_dir / "pages"
@@ -115,7 +116,7 @@ def _run_pipeline(job_id, params, uploaded_paths):
                 ref_url = r2_client.upload_file(uploaded_paths[i], key)
             try:
                 char["reference_image_url"] = kie_client.generate_character_reference(
-                    char.get("image_prompt", ""), reference_image_url=ref_url
+                    image_model, char.get("image_prompt", ""), reference_image_url=ref_url
                 )
             except Exception:
                 char["reference_image_url"] = None
@@ -143,7 +144,9 @@ def _run_pipeline(job_id, params, uploaded_paths):
                 )
 
         _set_progress(job_id, "pages", f"Generating page 0/{total_pages}", 0, total_pages)
-        image_urls = kie_client.generate_pages_concurrent(page_prompts, max_workers=5, on_complete=on_complete)
+        image_urls = kie_client.generate_pages_concurrent(
+            image_model, page_prompts, max_workers=5, on_complete=on_complete
+        )
 
         pages_for_pdf = []
         _set_progress(job_id, "page_uploads", "Uploading pages to storage", 0, total_pages)
@@ -215,6 +218,11 @@ def update_settings():
     return jsonify({"updated": updated, "settings": settings.status()})
 
 
+@app.route("/api/image-models")
+def image_models():
+    return jsonify({"models": kie_client.MODELS, "default": kie_client.DEFAULT_MODEL})
+
+
 @app.route("/api/books/generate", methods=["POST"])
 def generate_book():
     book_title = request.form.get("book_title", "").strip()
@@ -222,6 +230,7 @@ def generate_book():
     theme = request.form.get("theme", "").strip()
     main_characters = request.form.get("main_characters", "").strip()
     art_style_preference = request.form.get("art_style_preference", "").strip()
+    image_model = request.form.get("image_model", kie_client.DEFAULT_MODEL).strip()
 
     try:
         page_count = int(request.form.get("page_count", 75))
@@ -231,6 +240,9 @@ def generate_book():
 
     if not book_title or not theme:
         return jsonify({"error": "book_title and theme are required"}), 400
+
+    if image_model not in kie_client.MODELS:
+        return jsonify({"error": f"Unknown image_model: {image_model}"}), 400
 
     job_id = str(uuid.uuid4())
     db.create_job(job_id)
@@ -252,6 +264,7 @@ def generate_book():
         main_characters=main_characters,
         art_style_preference=art_style_preference,
         page_count=page_count,
+        image_model=image_model,
     )
 
     thread = threading.Thread(target=_run_pipeline, args=(job_id, params, uploaded_paths), daemon=True)
