@@ -162,6 +162,19 @@ def _character_names_joined(characters):
     return ", ".join(c.get("name", "") for c in characters if c.get("name"))
 
 
+def _page_characters(characters, page):
+    """Restricts a page's reference images to only the characters actually present on that
+    page (per Claude's characters_on_page field), so a character shown at different ages/life
+    stages doesn't get conditioned on the wrong stage's reference image. Falls back to every
+    character if the page didn't specify (e.g. older blueprints, or a Claude omission)."""
+    names_on_page = page.get("characters_on_page")
+    if not names_on_page:
+        return characters
+    wanted = {n.strip().lower() for n in names_on_page if n}
+    matched = [c for c in characters if (c.get("name") or "").strip().lower() in wanted]
+    return matched or characters
+
+
 def _build_cover_prompt(title, theme, characters, reference_urls):
     prompt = (
         f"Wraparound children's book cover illustration for '{title}'. "
@@ -295,16 +308,21 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
             _set_progress(job_id, "characters", step_text, i + 1, len(characters))
 
         pages = blueprint["pages"]
+        # Full set, used for the cover (which isn't tied to one story moment).
         page_reference_urls = _consistency_reference_urls(art_style_ref_url, characters)
-        character_names_joined = _character_names_joined(characters)
-        consistency_suffix = _consistency_suffix(page_reference_urls)
+
         page_prompts = []
+        page_reference_urls_per_page = []
         for p in pages:
+            page_chars = _page_characters(characters, p)
+            page_refs = _consistency_reference_urls(art_style_ref_url, page_chars)
+            names_joined = _character_names_joined(page_chars)
             prompt = p.get("image_prompt", "")
-            if character_names_joined:
-                prompt += f" Characters present: {character_names_joined}."
-            prompt += consistency_suffix
+            if names_joined:
+                prompt += f" Characters present: {names_joined}."
+            prompt += _consistency_suffix(page_refs)
             page_prompts.append(prompt)
+            page_reference_urls_per_page.append(page_refs)
         total_pages = len(page_prompts)
 
         existing_pages = {p["page_num"]: p for p in db.get_book(book_id)["pages"]} if resume_book_id else {}
@@ -318,6 +336,7 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
         image_urls = [None] * total_pages
         page_errors = [None] * total_pages
         prompts_to_generate = [page_prompts[i] for i in needs_generation]
+        refs_to_generate = [page_reference_urls_per_page[i] for i in needs_generation]
 
         if prompts_to_generate:
             progress_lock = threading.Lock()
@@ -335,7 +354,7 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
 
             _set_progress(job_id, "pages", f"Generating page 0/{len(prompts_to_generate)}", 0, len(prompts_to_generate))
             partial_urls, partial_errors = kie_client.generate_pages_concurrent(
-                image_model, prompts_to_generate, reference_image_urls=page_reference_urls,
+                image_model, prompts_to_generate, reference_image_urls_per_page=refs_to_generate,
                 max_workers=5, on_complete=on_complete,
             )
             for sub_i, real_i in enumerate(needs_generation):
@@ -380,6 +399,7 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
             page_fields = dict(
                 s3_key=s3_key, story_text=page.get("story_text", ""),
                 image_prompt=page_prompts[idx], is_placeholder=is_placeholder,
+                characters_on_page=json.dumps(page.get("characters_on_page") or []),
             )
             if existing:
                 db.update_page(book_id, page_num, **page_fields)
@@ -617,6 +637,7 @@ def _serialize_book(book):
             p["s3_url"] = _page_image_path(book["book_id"], p["page_num"]) if p.get("s3_key") else None
             p.pop("s3_key", None)
             p["is_placeholder"] = bool(p.get("is_placeholder"))
+            p["characters_on_page"] = json.loads(p["characters_on_page"]) if p.get("characters_on_page") else []
             pages.append(p)
         book["pages"] = pages
     return book
@@ -747,7 +768,9 @@ def regenerate_page(book_id, page_num):
 
     characters, _art_style, _title = _load_characters_with_refs(book)
     art_style_ref_url = r2_client.presigned_url(book["art_style_ref_key"]) if book.get("art_style_ref_key") else None
-    reference_urls = _consistency_reference_urls(art_style_ref_url, characters)
+    characters_on_page = json.loads(page["characters_on_page"]) if page.get("characters_on_page") else None
+    page_chars = _page_characters(characters, {"characters_on_page": characters_on_page})
+    reference_urls = _consistency_reference_urls(art_style_ref_url, page_chars)
 
     try:
         image_url = kie_client.generate_page_image(image_model, prompt, reference_image_urls=reference_urls)

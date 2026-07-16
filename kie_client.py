@@ -226,16 +226,22 @@ def generate_cover_image(model_id, prompt, reference_image_urls=None):
     return generate_image(model_id, prompt, reference_image_urls=reference_image_urls, aspect_ratio=aspect_ratio)
 
 
-def generate_pages_concurrent(model_id, page_prompts, reference_image_urls=None, max_workers=5, on_complete=None):
-    """Generates every page independently. A page that still fails after retries does not
-    abort the rest of the book — its slot in the returned errors list holds the failure reason
-    instead, and the caller decides how to handle it (e.g. a placeholder illustration)."""
+def generate_pages_concurrent(
+    model_id, page_prompts, reference_image_urls_per_page=None, max_workers=5, on_complete=None
+):
+    """Generates every page independently. reference_image_urls_per_page, if given, must be a list
+    the same length as page_prompts — each page gets only its own reference images (e.g. so a page
+    depicting a character as a baby doesn't get conditioned on that character's adult reference).
+    A page that still fails after retries does not abort the rest of the book — its slot in the
+    returned errors list holds the failure reason instead, and the caller decides how to handle it
+    (e.g. a placeholder illustration)."""
     results = [None] * len(page_prompts)
     errors = [None] * len(page_prompts)
+    refs_per_page = reference_image_urls_per_page or [None] * len(page_prompts)
 
     def _worker(index, prompt):
         try:
-            results[index] = generate_page_image(model_id, prompt, reference_image_urls=reference_image_urls)
+            results[index] = generate_page_image(model_id, prompt, reference_image_urls=refs_per_page[index])
         except Exception as e:
             errors[index] = str(e)
         if on_complete:

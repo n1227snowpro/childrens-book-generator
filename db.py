@@ -95,7 +95,8 @@ def init_db():
                 s3_key TEXT,
                 story_text TEXT,
                 image_prompt TEXT,
-                is_placeholder INTEGER DEFAULT 0
+                is_placeholder INTEGER DEFAULT 0,
+                characters_on_page TEXT
             )
         """)
         try:
@@ -108,6 +109,10 @@ def init_db():
             pass
         try:
             conn.execute("ALTER TABLE pages ADD COLUMN is_placeholder INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE pages ADD COLUMN characters_on_page TEXT")
         except sqlite3.OperationalError:
             pass
         conn.execute("""
@@ -189,12 +194,12 @@ def update_book(book_id, **fields):
         conn.execute(f"UPDATE books SET {cols} WHERE book_id = ?", values)
 
 
-def add_page(book_id, page_num, s3_key, story_text, image_prompt=None, is_placeholder=False):
+def add_page(book_id, page_num, s3_key, story_text, image_prompt=None, is_placeholder=False, characters_on_page=None):
     with _lock, get_conn() as conn:
         conn.execute(
-            "INSERT INTO pages (book_id, page_num, s3_key, story_text, image_prompt, is_placeholder) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (book_id, page_num, s3_key, story_text, image_prompt, int(is_placeholder)),
+            "INSERT INTO pages (book_id, page_num, s3_key, story_text, image_prompt, is_placeholder, "
+            "characters_on_page) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (book_id, page_num, s3_key, story_text, image_prompt, int(is_placeholder), characters_on_page),
         )
 
 
@@ -228,7 +233,7 @@ def get_book(book_id):
             return None
         book = dict(book)
         pages = conn.execute(
-            "SELECT page_num, s3_key, story_text, image_prompt, is_placeholder FROM pages "
+            "SELECT page_num, s3_key, story_text, image_prompt, is_placeholder, characters_on_page FROM pages "
             "WHERE book_id = ? ORDER BY page_num", (book_id,)
         ).fetchall()
         book["pages"] = [dict(p) for p in pages]
