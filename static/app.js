@@ -281,12 +281,35 @@ function renderHistoryCard(book) {
       ${book.pdf_url ? `<a class="btn-primary" href="${book.pdf_url}" target="_blank">Download PDF</a>` : ""}
       ${book.cover_url ? `<a class="btn-primary" href="${book.cover_url}" target="_blank">Download Cover</a>` : ""}
       ${book.can_continue ? `<button type="button" class="btn-primary" data-action="continue">Continue</button>` : ""}
+      ${book.can_regenerate_cover ? `<button type="button" class="btn-secondary" data-action="regen-cover">Regenerate Cover</button>` : ""}
       <button type="button" class="btn-secondary" data-action="toggle-pages">View Pages</button>
       <button type="button" class="btn-secondary" data-action="delete">Delete</button>
     </div>
     <p class="hint continue-status hidden"></p>
     <div class="history-pages hidden"></div>
   `;
+
+  const regenCoverBtn = card.querySelector('[data-action="regen-cover"]');
+  if (regenCoverBtn) {
+    const continueStatus = card.querySelector(".continue-status");
+    regenCoverBtn.addEventListener("click", async () => {
+      regenCoverBtn.disabled = true;
+      continueStatus.classList.remove("hidden", "error");
+      continueStatus.textContent = "Regenerating cover…";
+      try {
+        const res = await fetch(`/api/books/${book.book_id}/cover/regenerate`, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to regenerate cover");
+        continueStatus.textContent = "Cover updated.";
+        loadHistory();
+      } catch (err) {
+        continueStatus.textContent = err.message;
+        continueStatus.classList.add("error");
+      } finally {
+        regenCoverBtn.disabled = false;
+      }
+    });
+  }
 
   const continueBtn = card.querySelector('[data-action="continue"]');
   if (continueBtn) {

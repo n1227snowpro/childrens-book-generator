@@ -186,16 +186,22 @@ def _generate_gpt_image_2(prompt, reference_image_urls, aspect_ratio):
     return _poll_unified(task_id)
 
 
-def generate_image(model_id, prompt, reference_image_url=None, aspect_ratio="1:1"):
+MAX_REFERENCE_IMAGES = 8
+
+
+def generate_image(model_id, prompt, reference_image_urls=None, aspect_ratio="1:1"):
     if model_id not in MODELS:
         raise ValueError(f"Unknown image model: {model_id}")
 
-    reference_image_urls = [reference_image_url] if reference_image_url else None
+    if isinstance(reference_image_urls, str):
+        reference_image_urls = [reference_image_urls]
+    reference_image_urls = [u for u in (reference_image_urls or []) if u][:MAX_REFERENCE_IMAGES] or None
 
     def _attempt():
         if model_id == "nano-banana":
             return _generate_nano_banana(prompt, reference_image_urls, aspect_ratio)
         if model_id in ("flux-kontext-pro", "flux-kontext-max"):
+            # Flux Kontext only accepts a single conditioning image.
             return _generate_flux_kontext(prompt, model_id, reference_image_urls, aspect_ratio)
         if model_id == "gpt-image-2":
             return _generate_gpt_image_2(prompt, reference_image_urls, aspect_ratio)
@@ -203,20 +209,24 @@ def generate_image(model_id, prompt, reference_image_url=None, aspect_ratio="1:1
     return _with_retry(_attempt)
 
 
-def generate_character_reference(model_id, prompt, reference_image_url=None):
-    return generate_image(model_id, prompt, reference_image_url=reference_image_url, aspect_ratio="1:1")
+def generate_style_reference(model_id, prompt):
+    return generate_image(model_id, prompt, reference_image_urls=None, aspect_ratio="1:1")
 
 
-def generate_page_image(model_id, prompt):
-    return generate_image(model_id, prompt, reference_image_url=None, aspect_ratio="3:4")
+def generate_character_reference(model_id, prompt, reference_image_urls=None):
+    return generate_image(model_id, prompt, reference_image_urls=reference_image_urls, aspect_ratio="1:1")
 
 
-def generate_cover_image(model_id, prompt, reference_image_url=None):
+def generate_page_image(model_id, prompt, reference_image_urls=None):
+    return generate_image(model_id, prompt, reference_image_urls=reference_image_urls, aspect_ratio="3:4")
+
+
+def generate_cover_image(model_id, prompt, reference_image_urls=None):
     aspect_ratio = _COVER_ASPECT_RATIO.get(model_id, "3:2")
-    return generate_image(model_id, prompt, reference_image_url=reference_image_url, aspect_ratio=aspect_ratio)
+    return generate_image(model_id, prompt, reference_image_urls=reference_image_urls, aspect_ratio=aspect_ratio)
 
 
-def generate_pages_concurrent(model_id, page_prompts, max_workers=5, on_complete=None):
+def generate_pages_concurrent(model_id, page_prompts, reference_image_urls=None, max_workers=5, on_complete=None):
     """Generates every page independently. A page that still fails after retries does not
     abort the rest of the book — its slot in the returned errors list holds the failure reason
     instead, and the caller decides how to handle it (e.g. a placeholder illustration)."""
@@ -225,7 +235,7 @@ def generate_pages_concurrent(model_id, page_prompts, max_workers=5, on_complete
 
     def _worker(index, prompt):
         try:
-            results[index] = generate_page_image(model_id, prompt)
+            results[index] = generate_page_image(model_id, prompt, reference_image_urls=reference_image_urls)
         except Exception as e:
             errors[index] = str(e)
         if on_complete:

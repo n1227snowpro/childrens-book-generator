@@ -135,6 +135,56 @@ def _page_image_path(book_id, page_num):
     return f"/api/books/{book_id}/pages/{page_num}/image"
 
 
+def _style_reference_prompt(art_style):
+    return (
+        f"A single reference illustration showcasing this art style: {art_style} "
+        "Show a simple, generic scene with no specific characters, clearly demonstrating the "
+        "color palette, linework, shading, and overall rendering technique. No text."
+    )
+
+
+def _character_reference_urls(characters):
+    return [r2_client.presigned_url(c["s3_key"]) for c in characters if c.get("s3_key")]
+
+
+def _consistency_reference_urls(art_style_ref_url, characters):
+    urls = [art_style_ref_url] + _character_reference_urls(characters)
+    return [u for u in urls if u]
+
+
+def _consistency_suffix(reference_urls):
+    if not reference_urls:
+        return ""
+    return " Match the exact illustration style and character appearances shown in the reference images."
+
+
+def _character_names_joined(characters):
+    return ", ".join(c.get("name", "") for c in characters if c.get("name"))
+
+
+def _build_cover_prompt(title, theme, characters, reference_urls):
+    prompt = (
+        f"Wraparound children's book cover illustration for '{title}'. "
+        f"Render the title text \"{title}\" prominently and legibly as part of the illustration, "
+        "placed on the front-facing right-hand panel with generous margin from all edges and clear "
+        "of the spine fold. Theme: " + theme + "."
+    )
+    names = _character_names_joined(characters)
+    if names:
+        prompt += f" Characters present: {names}."
+    prompt += _consistency_suffix(reference_urls)
+    return prompt
+
+
+def _load_characters_with_refs(book):
+    blueprint = json.loads(book["blueprint_json"]) if book.get("blueprint_json") else {}
+    characters = []
+    for c in blueprint.get("characters", []):
+        saved = db.get_character_by_name(c.get("name", ""))
+        characters.append({**c, "s3_key": saved["s3_key"] if saved else None})
+    return characters, blueprint.get("art_style", ""), blueprint.get("book_title", book.get("title", ""))
+
+
 def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
     book_id = resume_book_id or str(uuid.uuid4())
     image_model = params["image_model"]
@@ -178,8 +228,28 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
         final_dir.mkdir(parents=True, exist_ok=True)
         char_refs_dir.mkdir(parents=True, exist_ok=True)
 
+        art_style = blueprint.get("art_style", "")
+
+        art_style_ref_key = existing_book.get("art_style_ref_key") if resume_book_id else None
+        if art_style_ref_key:
+            art_style_ref_url = r2_client.presigned_url(art_style_ref_key)
+        else:
+            art_style_ref_url = None
+            _set_progress(job_id, "characters", "Generating art style reference", 0, 1)
+            try:
+                style_image_url = kie_client.generate_style_reference(
+                    image_model, _style_reference_prompt(art_style)
+                )
+                style_local_path = final_dir / "art-style-reference.jpg"
+                _download(style_image_url, style_local_path)
+                art_style_ref_key = f"books/{book_id}/art-style-reference.jpg"
+                r2_client.upload_file(str(style_local_path), art_style_ref_key)
+                db.update_book(book_id, art_style_ref_key=art_style_ref_key)
+                art_style_ref_url = r2_client.presigned_url(art_style_ref_key)
+            except Exception:
+                art_style_ref_key = None
+
         characters = blueprint.get("characters", [])
-        char_visual_descriptions = []
         _set_progress(job_id, "characters", "Generating character references", 0, max(len(characters), 1))
         for i, char in enumerate(characters):
             name = char.get("name") or f"Character {i + 1}"
@@ -197,8 +267,12 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
                 step_text = f"Reusing saved reference for {name} ({i + 1}/{len(characters)})"
             else:
                 try:
+                    char_ref_urls = [u for u in [uploaded_ref_url, art_style_ref_url] if u]
+                    char_prompt = char.get("image_prompt", "") + _consistency_suffix(
+                        [art_style_ref_url] if art_style_ref_url else []
+                    )
                     kie_url = kie_client.generate_character_reference(
-                        image_model, char.get("image_prompt", ""), reference_image_url=uploaded_ref_url
+                        image_model, char_prompt, reference_image_urls=char_ref_urls
                     )
                     local_path = char_refs_dir / f"char-{i}.jpg"
                     _download(kie_url, local_path)
@@ -218,13 +292,19 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
                     char["s3_key"] = None
                 step_text = f"Generating character reference {i + 1}/{len(characters)}"
 
-            char_visual_descriptions.append(f"{char.get('name', '')}: {char.get('visual_description', '')}")
             _set_progress(job_id, "characters", step_text, i + 1, len(characters))
 
-        art_style = blueprint.get("art_style", "")
-        char_desc_joined = "; ".join(char_visual_descriptions)
         pages = blueprint["pages"]
-        page_prompts = [f"{art_style} {p.get('image_prompt', '')} Characters: {char_desc_joined}" for p in pages]
+        page_reference_urls = _consistency_reference_urls(art_style_ref_url, characters)
+        character_names_joined = _character_names_joined(characters)
+        consistency_suffix = _consistency_suffix(page_reference_urls)
+        page_prompts = []
+        for p in pages:
+            prompt = p.get("image_prompt", "")
+            if character_names_joined:
+                prompt += f" Characters present: {character_names_joined}."
+            prompt += consistency_suffix
+            page_prompts.append(prompt)
         total_pages = len(page_prompts)
 
         existing_pages = {p["page_num"]: p for p in db.get_book(book_id)["pages"]} if resume_book_id else {}
@@ -255,7 +335,8 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
 
             _set_progress(job_id, "pages", f"Generating page 0/{len(prompts_to_generate)}", 0, len(prompts_to_generate))
             partial_urls, partial_errors = kie_client.generate_pages_concurrent(
-                image_model, prompts_to_generate, max_workers=5, on_complete=on_complete
+                image_model, prompts_to_generate, reference_image_urls=page_reference_urls,
+                max_workers=5, on_complete=on_complete,
             )
             for sub_i, real_i in enumerate(needs_generation):
                 image_urls[real_i] = partial_urls[sub_i]
@@ -323,25 +404,16 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
         cover_key = existing_book.get("cover_key") if resume_book_id else None
         if not cover_key:
             try:
-                primary_char = characters[0] if characters else None
-                cover_ref_url = None
-                if primary_char and primary_char.get("s3_key"):
-                    cover_ref_url = r2_client.presigned_url(primary_char["s3_key"])
-
-                cover_prompt = (
-                    f"{art_style} Wraparound children's book cover illustration for '{title}'. "
-                    f"Theme: {params['theme']}. Featuring: {char_desc_joined}. "
-                    "Leave open, uncluttered space on the right-hand side for a title."
-                )
+                cover_prompt = _build_cover_prompt(title, params["theme"], characters, page_reference_urls)
                 cover_image_url = kie_client.generate_cover_image(
-                    image_model, cover_prompt, reference_image_url=cover_ref_url
+                    image_model, cover_prompt, reference_image_urls=page_reference_urls
                 )
                 cover_image_path = final_dir / "cover-art.jpg"
                 _download(cover_image_url, cover_image_path)
 
                 cover_pdf_path = final_dir / f"{slug}-cover.pdf"
                 cover_builder.build_cover_pdf(
-                    str(cover_image_path), title, title, params["page_count"], cover_pdf_path
+                    str(cover_image_path), title, params["page_count"], cover_pdf_path
                 )
                 cover_key = f"books/{book_id}/final/{slug}-cover.pdf"
                 r2_client.upload_file(str(cover_pdf_path), cover_key)
@@ -534,7 +606,9 @@ def _serialize_book(book):
     book["cover_url"] = _cover_path(book["book_id"]) if book.get("cover_key") else None
     book.pop("cover_key", None)
     book["can_continue"] = book["status"] == "error" and bool(book.get("blueprint_json"))
+    book["can_regenerate_cover"] = book["status"] in ("done", "error") and bool(book.get("blueprint_json"))
     book.pop("blueprint_json", None)
+    book.pop("art_style_ref_key", None)
     book["cover_dimensions"] = cover_builder.calculate_dimensions(book["page_count"])
     if "pages" in book:
         pages = []
@@ -575,6 +649,44 @@ def download_cover(book_id):
     if not book or not book.get("cover_key"):
         return jsonify({"error": "not found"}), 404
     return redirect(r2_client.presigned_url(book["cover_key"]))
+
+
+@app.route("/api/books/<book_id>/cover/regenerate", methods=["POST"])
+def regenerate_cover(book_id):
+    book = db.get_book(book_id)
+    if not book:
+        return jsonify({"error": "not found"}), 404
+    if not book.get("blueprint_json"):
+        return jsonify({"error": "No saved story data for this book"}), 400
+
+    image_model = book.get("image_model") or kie_client.DEFAULT_MODEL
+    characters, _art_style, title = _load_characters_with_refs(book)
+    art_style_ref_url = r2_client.presigned_url(book["art_style_ref_key"]) if book.get("art_style_ref_key") else None
+    reference_urls = _consistency_reference_urls(art_style_ref_url, characters)
+
+    try:
+        cover_prompt = _build_cover_prompt(title, book.get("theme") or "", characters, reference_urls)
+        cover_image_url = kie_client.generate_cover_image(
+            image_model, cover_prompt, reference_image_urls=reference_urls
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+    book_dir = BOOKS_DIR / book_id
+    final_dir = book_dir / "final"
+    final_dir.mkdir(parents=True, exist_ok=True)
+    cover_image_path = final_dir / "cover-art.jpg"
+    _download(cover_image_url, cover_image_path)
+
+    slug = _slugify(title)
+    cover_pdf_path = final_dir / f"{slug}-cover.pdf"
+    cover_builder.build_cover_pdf(str(cover_image_path), title, book["page_count"], cover_pdf_path)
+
+    cover_key = f"books/{book_id}/final/{slug}-cover.pdf"
+    r2_client.upload_file(str(cover_pdf_path), cover_key)
+    db.update_book(book_id, cover_key=cover_key)
+
+    return jsonify({"status": "ok", "cover_url": _cover_path(book_id)})
 
 
 @app.route("/api/books/<book_id>/pages/<int:page_num>/image")
@@ -633,8 +745,12 @@ def regenerate_page(book_id, page_num):
     if not prompt:
         return jsonify({"error": "No prompt available for this page; provide one"}), 400
 
+    characters, _art_style, _title = _load_characters_with_refs(book)
+    art_style_ref_url = r2_client.presigned_url(book["art_style_ref_key"]) if book.get("art_style_ref_key") else None
+    reference_urls = _consistency_reference_urls(art_style_ref_url, characters)
+
     try:
-        image_url = kie_client.generate_page_image(image_model, prompt)
+        image_url = kie_client.generate_page_image(image_model, prompt, reference_image_urls=reference_urls)
     except Exception as e:
         return jsonify({"error": str(e)}), 502
 
