@@ -793,11 +793,16 @@ def _rebuild_book_pdf(book, on_progress=None):
     db.update_book(book["book_id"], pdf_key=pdf_key)
 
 
-def _regenerate_page_job(job_id, book_id, page_num, image_model, prompt, reference_urls):
+def _regenerate_page_job(job_id, book_id, page_num, image_model, prompt, reference_urls, persist_prompt=True):
     """Regenerates a single page's image only. Does NOT rebuild the PDF — with many pages queued
     for regeneration, rebuilding after every single one would be slow and redundant (and racy if
     two regenerates run concurrently). The PDF is rebuilt on demand via a separate job/button once
-    the user is happy with all the images they've regenerated."""
+    the user is happy with all the images they've regenerated.
+
+    persist_prompt=False is used for edit-mode regenerations, where `prompt` is a short one-off
+    instruction ("make the sky orange") rather than the page's full scene description — saving it
+    over image_prompt would destroy the description needed if this page ever needs a from-scratch
+    regeneration later (e.g. if edits stop being enough and the page needs redrawing)."""
     try:
         db.update_job(job_id, status="running", book_id=book_id)
         _push(job_id, {"step": "Generating image", "pct": 20})
@@ -813,7 +818,10 @@ def _regenerate_page_job(job_id, book_id, page_num, image_model, prompt, referen
         _push(job_id, {"step": "Uploading image", "pct": 85})
         r2_key = f"books/{book_id}/pages/page-{page_num:03d}.jpg"
         r2_client.upload_file(str(local_path), r2_key)
-        db.update_page(book_id, page_num, s3_key=r2_key, image_prompt=prompt, is_placeholder=0)
+        page_fields = {"s3_key": r2_key, "is_placeholder": 0}
+        if persist_prompt:
+            page_fields["image_prompt"] = prompt
+        db.update_page(book_id, page_num, **page_fields)
 
         db.update_job(job_id, status="done", step="Done", current=1, total=1)
         _push(job_id, {"done": True, "book_id": book_id, "s3_url": _page_image_path(book_id, page_num)})
@@ -879,18 +887,33 @@ def regenerate_page(book_id, page_num):
 
     data = request.get_json(force=True, silent=True) or {}
     image_model = data.get("image_model") or book.get("image_model") or kie_client.DEFAULT_MODEL
-    prompt = (data.get("prompt") or page.get("image_prompt") or "").strip()
+    edit_instruction = (data.get("prompt") or "").strip()
 
     if image_model not in kie_client.MODELS:
         return jsonify({"error": f"Unknown image_model: {image_model}"}), 400
-    if not prompt:
-        return jsonify({"error": "No prompt available for this page; provide one"}), 400
 
-    characters, _art_style, _title = _load_characters_with_refs(book)
-    art_style_ref_url = r2_client.presigned_url(book["art_style_ref_key"]) if book.get("art_style_ref_key") else None
-    characters_on_page = json.loads(page["characters_on_page"]) if page.get("characters_on_page") else None
-    page_chars = _page_characters(characters, {"characters_on_page": characters_on_page})
-    reference_urls = _consistency_reference_urls(art_style_ref_url, page_chars)
+    if page.get("s3_key") and not page.get("is_placeholder"):
+        # Edit mode: use the page's current image as the reference and apply the instruction to
+        # it, rather than regenerating the scene from scratch — keeps everything about the page
+        # that wasn't mentioned in the instruction unchanged, since the model is editing the
+        # actual pixels instead of reinterpreting a text description.
+        if not edit_instruction:
+            return jsonify({"error": "Describe the edit you want, e.g. \"make the sky orange\""}), 400
+        prompt = edit_instruction
+        reference_urls = [r2_client.presigned_url(page["s3_key"])]
+        persist_prompt = False
+    else:
+        # No successful image to edit yet (placeholder or never generated) — fall back to a fresh
+        # generation using the book's character/style references, same as before.
+        prompt = edit_instruction or page.get("image_prompt") or ""
+        if not prompt:
+            return jsonify({"error": "No prompt available for this page; provide one"}), 400
+        characters, _art_style, _title = _load_characters_with_refs(book)
+        art_style_ref_url = r2_client.presigned_url(book["art_style_ref_key"]) if book.get("art_style_ref_key") else None
+        characters_on_page = json.loads(page["characters_on_page"]) if page.get("characters_on_page") else None
+        page_chars = _page_characters(characters, {"characters_on_page": characters_on_page})
+        reference_urls = _consistency_reference_urls(art_style_ref_url, page_chars)
+        persist_prompt = True
 
     job_id = str(uuid.uuid4())
     db.create_job(job_id)
@@ -899,6 +922,7 @@ def regenerate_page(book_id, page_num):
     thread = threading.Thread(
         target=_regenerate_page_job,
         args=(job_id, book_id, page_num, image_model, prompt, reference_urls),
+        kwargs={"persist_prompt": persist_prompt},
         daemon=True,
     )
     thread.start()

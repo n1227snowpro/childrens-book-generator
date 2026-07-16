@@ -471,13 +471,16 @@ function renderHistoryCard(book) {
 function renderPageThumb(bookId, page) {
   const wrap = document.createElement("div");
   wrap.className = "page-thumb" + (page.is_placeholder ? " needs-fix" : "");
+  const editPlaceholder = page.is_placeholder
+    ? "This page has no image yet — describe what to illustrate"
+    : "Describe an edit to this image, e.g. \"make the sky orange\"";
   wrap.innerHTML = `
     <img src="${page.s3_url}" alt="Page ${page.page_num}" />
     <div class="page-thumb-footer">
       <span>Page ${page.page_num}${page.is_placeholder ? " ⚠" : ""}</span>
       <button type="button" class="btn-secondary btn-small" data-action="regen">Regenerate</button>
     </div>
-    <textarea class="page-prompt-input hint" rows="2" placeholder="Image prompt for this page — edit before regenerating">${escapeHtml(page.image_prompt || "")}</textarea>
+    <textarea class="page-prompt-input hint" rows="2" placeholder="${escapeHtml(editPlaceholder)}"></textarea>
     <p class="page-thumb-status hint"></p>
   `;
 
