@@ -4,10 +4,32 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 from PIL import Image
 
-PAGE_WIDTH = 594  # 8.25in
-PAGE_HEIGHT = 792  # 11in
+TRIM_WIDTH_IN = 8.25
+TRIM_HEIGHT_IN = 11.0
+
+# KDP interior bleed spec: add 0.125in to width (outer edge) and 0.25in to height (0.125 top +
+# 0.125 bottom) — https://kdp.amazon.com/en_US/help/topic/GVBQ3CMEQW3W2VL6. Our page template is
+# a single uniform layout (no recto/verso mirroring), so the extra width bleed is split evenly
+# across left/right to keep the trim rectangle centered; height bleed is 0.125in top and bottom
+# per spec. Images still bleed edge-to-edge on the full page either way.
+BLEED_LEFT_IN = 0.0625
+BLEED_RIGHT_IN = 0.0625
+BLEED_BOTTOM_IN = 0.125
+BLEED_TOP_IN = 0.125
+
+PAGE_WIDTH = round((TRIM_WIDTH_IN + BLEED_LEFT_IN + BLEED_RIGHT_IN) * 72)
+PAGE_HEIGHT = round((TRIM_HEIGHT_IN + BLEED_TOP_IN + BLEED_BOTTOM_IN) * 72)
+
+# KDP's minimum text margin for bleed interiors is 0.375in from the trim edge (also covers the
+# inside/gutter margin bracket for this app's max supported page count of 150). We use a bit more
+# than the bare minimum so descenders (g, y, p) and KDP's own measurement rounding can't tip a
+# bottom line back into the "outside the margins" danger zone.
+SAFE_MARGIN_IN = 0.5
+SAFE_MARGIN_PT = SAFE_MARGIN_IN * 72
+TRIM_BOTTOM_PT = BLEED_BOTTOM_IN * 72
+
 BAND_HEIGHT = 1.9 * 72
-MARGIN_X = 0.45 * 72
+MARGIN_X = 0.55 * 72
 FONT_NAME = "Helvetica-Bold"
 MAX_FONT_SIZE = 24
 MIN_FONT_SIZE = 12
@@ -68,15 +90,20 @@ def _draw_page(c, image_path, story_text):
     c.rect(0, 0, PAGE_WIDTH, BAND_HEIGHT, fill=1, stroke=0)
     c.restoreState()
 
+    # The band itself is decorative art and may bleed to the page edge like the illustration —
+    # only the actual text glyphs are subject to KDP's margin rule, so the text is confined to
+    # start no lower than TRIM_BOTTOM_PT + SAFE_MARGIN_PT above the page's bottom (bleed) edge.
     max_width = PAGE_WIDTH - 2 * MARGIN_X
-    max_height = BAND_HEIGHT - 0.3 * 72
+    text_bottom = TRIM_BOTTOM_PT + SAFE_MARGIN_PT
+    text_top = BAND_HEIGHT - 0.15 * 72
+    max_height = text_top - text_bottom
     font_size, lines, leading = _fit_text(story_text or "", max_width, max_height)
 
     c.setFillColor(white)
     c.setFont(FONT_NAME, font_size)
 
     block_height = len(lines) * leading
-    start_y = (BAND_HEIGHT - block_height) / 2 + block_height - leading + (leading - font_size) / 2
+    start_y = text_bottom + (max_height - block_height) / 2 + block_height - leading + (leading - font_size) / 2
 
     y = start_y
     for line in lines:
