@@ -292,22 +292,47 @@ function renderHistoryCard(book) {
   const regenCoverBtn = card.querySelector('[data-action="regen-cover"]');
   if (regenCoverBtn) {
     const continueStatus = card.querySelector(".continue-status");
-    regenCoverBtn.addEventListener("click", async () => {
+    regenCoverBtn.addEventListener("click", () => {
       regenCoverBtn.disabled = true;
       continueStatus.classList.remove("hidden", "error");
-      continueStatus.textContent = "Regenerating cover…";
-      try {
-        const res = await fetch(`/api/books/${book.book_id}/cover/regenerate`, { method: "POST" });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Failed to regenerate cover");
-        continueStatus.textContent = "Cover updated.";
-        loadHistory();
-      } catch (err) {
-        continueStatus.textContent = err.message;
-        continueStatus.classList.add("error");
-      } finally {
-        regenCoverBtn.disabled = false;
-      }
+      continueStatus.textContent = "Starting…";
+
+      fetch(`/api/books/${book.book_id}/cover/regenerate`, { method: "POST" })
+        .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+        .then(({ ok, data }) => {
+          if (!ok) throw new Error(data.error || "Failed to regenerate cover");
+
+          const source = new EventSource(`/api/books/stream/${data.job_id}`);
+          source.onmessage = (event) => {
+            const evt = JSON.parse(event.data);
+            if (evt.error) {
+              continueStatus.textContent = evt.error;
+              continueStatus.classList.add("error");
+              source.close();
+              regenCoverBtn.disabled = false;
+              return;
+            }
+            if (evt.step) {
+              continueStatus.textContent =
+                typeof evt.pct === "number" ? `${evt.step} (${evt.pct}%)` : evt.step;
+            }
+            if (evt.done) {
+              source.close();
+              continueStatus.textContent = "Cover updated.";
+              regenCoverBtn.disabled = false;
+              loadHistory();
+            }
+          };
+          source.onerror = () => {
+            source.close();
+            regenCoverBtn.disabled = false;
+          };
+        })
+        .catch((err) => {
+          continueStatus.textContent = err.message;
+          continueStatus.classList.add("error");
+          regenCoverBtn.disabled = false;
+        });
     });
   }
 
@@ -410,26 +435,49 @@ function renderPageThumb(bookId, page) {
   const statusEl = wrap.querySelector(".page-thumb-status");
   const img = wrap.querySelector("img");
 
-  btn.addEventListener("click", async () => {
+  btn.addEventListener("click", () => {
     btn.disabled = true;
-    statusEl.textContent = "Regenerating…";
-    try {
-      const res = await fetch(`/api/books/${bookId}/pages/${page.page_num}/regenerate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Regeneration failed");
+    statusEl.textContent = "Starting…";
 
-      img.src = `${data.s3_url}?t=${Date.now()}`;
-      wrap.classList.remove("needs-fix");
-      statusEl.textContent = "Updated.";
-    } catch (err) {
-      statusEl.textContent = err.message;
-    } finally {
-      btn.disabled = false;
-    }
+    fetch(`/api/books/${bookId}/pages/${page.page_num}/regenerate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    })
+      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) throw new Error(data.error || "Failed to start regeneration");
+
+        const source = new EventSource(`/api/books/stream/${data.job_id}`);
+        source.onmessage = (event) => {
+          const evt = JSON.parse(event.data);
+          if (evt.error) {
+            statusEl.textContent = evt.error;
+            source.close();
+            btn.disabled = false;
+            return;
+          }
+          if (evt.step) {
+            statusEl.textContent =
+              typeof evt.pct === "number" ? `${evt.step} (${evt.pct}%)` : evt.step;
+          }
+          if (evt.done) {
+            source.close();
+            img.src = `${page.s3_url}?t=${Date.now()}`;
+            wrap.classList.remove("needs-fix");
+            statusEl.textContent = "Updated.";
+            btn.disabled = false;
+          }
+        };
+        source.onerror = () => {
+          source.close();
+          btn.disabled = false;
+        };
+      })
+      .catch((err) => {
+        statusEl.textContent = err.message;
+        btn.disabled = false;
+      });
   });
 
   return wrap;

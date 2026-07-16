@@ -672,6 +672,40 @@ def download_cover(book_id):
     return redirect(r2_client.presigned_url(book["cover_key"]))
 
 
+def _regenerate_cover_job(job_id, book_id, image_model, cover_prompt, reference_urls, title, page_count):
+    try:
+        db.update_job(job_id, status="running", book_id=book_id)
+        _push(job_id, {"step": "Generating cover art", "pct": 15})
+        cover_image_url = kie_client.generate_cover_image(
+            image_model, cover_prompt, reference_image_urls=reference_urls
+        )
+
+        _push(job_id, {"step": "Downloading cover art", "pct": 50})
+        book_dir = BOOKS_DIR / book_id
+        final_dir = book_dir / "final"
+        final_dir.mkdir(parents=True, exist_ok=True)
+        cover_image_path = final_dir / "cover-art.jpg"
+        _download(cover_image_url, cover_image_path)
+
+        _push(job_id, {"step": "Building cover PDF", "pct": 75})
+        slug = _slugify(title)
+        cover_pdf_path = final_dir / f"{slug}-cover.pdf"
+        cover_builder.build_cover_pdf(str(cover_image_path), title, page_count, cover_pdf_path)
+
+        _push(job_id, {"step": "Uploading cover", "pct": 90})
+        cover_key = f"books/{book_id}/final/{slug}-cover.pdf"
+        r2_client.upload_file(str(cover_pdf_path), cover_key)
+        db.update_book(book_id, cover_key=cover_key)
+
+        db.update_job(job_id, status="done", step="Done", current=1, total=1)
+        _push(job_id, {"done": True, "book_id": book_id, "cover_url": _cover_path(book_id)})
+    except Exception as e:
+        db.update_job(job_id, status="error", error=str(e))
+        _push(job_id, {"done": True, "error": str(e)})
+    finally:
+        _cleanup_queue(job_id)
+
+
 @app.route("/api/books/<book_id>/cover/regenerate", methods=["POST"])
 def regenerate_cover(book_id):
     book = db.get_book(book_id)
@@ -684,30 +718,20 @@ def regenerate_cover(book_id):
     characters, _art_style, title = _load_characters_with_refs(book)
     art_style_ref_url = r2_client.presigned_url(book["art_style_ref_key"]) if book.get("art_style_ref_key") else None
     reference_urls = _consistency_reference_urls(art_style_ref_url, characters)
+    cover_prompt = _build_cover_prompt(title, book.get("theme") or "", characters, reference_urls)
 
-    try:
-        cover_prompt = _build_cover_prompt(title, book.get("theme") or "", characters, reference_urls)
-        cover_image_url = kie_client.generate_cover_image(
-            image_model, cover_prompt, reference_image_urls=reference_urls
-        )
-    except Exception as e:
-        return jsonify({"error": str(e)}), 502
+    job_id = str(uuid.uuid4())
+    db.create_job(job_id)
+    _get_queue(job_id)
 
-    book_dir = BOOKS_DIR / book_id
-    final_dir = book_dir / "final"
-    final_dir.mkdir(parents=True, exist_ok=True)
-    cover_image_path = final_dir / "cover-art.jpg"
-    _download(cover_image_url, cover_image_path)
+    thread = threading.Thread(
+        target=_regenerate_cover_job,
+        args=(job_id, book_id, image_model, cover_prompt, reference_urls, title, book["page_count"]),
+        daemon=True,
+    )
+    thread.start()
 
-    slug = _slugify(title)
-    cover_pdf_path = final_dir / f"{slug}-cover.pdf"
-    cover_builder.build_cover_pdf(str(cover_image_path), title, book["page_count"], cover_pdf_path)
-
-    cover_key = f"books/{book_id}/final/{slug}-cover.pdf"
-    r2_client.upload_file(str(cover_pdf_path), cover_key)
-    db.update_book(book_id, cover_key=cover_key)
-
-    return jsonify({"status": "ok", "cover_url": _cover_path(book_id)})
+    return jsonify({"job_id": job_id, "status": "queued"})
 
 
 @app.route("/api/books/<book_id>/pages/<int:page_num>/image")
@@ -748,6 +772,37 @@ def _rebuild_book_pdf(book):
     db.update_book(book["book_id"], pdf_key=pdf_key)
 
 
+def _regenerate_page_job(job_id, book_id, page_num, image_model, prompt, reference_urls):
+    try:
+        db.update_job(job_id, status="running", book_id=book_id)
+        _push(job_id, {"step": "Generating image", "pct": 15})
+        image_url = kie_client.generate_page_image(image_model, prompt, reference_image_urls=reference_urls)
+
+        _push(job_id, {"step": "Downloading image", "pct": 55})
+        book_dir = BOOKS_DIR / book_id
+        pages_dir = book_dir / "pages"
+        pages_dir.mkdir(parents=True, exist_ok=True)
+        local_path = pages_dir / f"page-{page_num:03d}.jpg"
+        _download(image_url, local_path)
+
+        _push(job_id, {"step": "Uploading image", "pct": 70})
+        r2_key = f"books/{book_id}/pages/page-{page_num:03d}.jpg"
+        r2_client.upload_file(str(local_path), r2_key)
+        db.update_page(book_id, page_num, s3_key=r2_key, image_prompt=prompt, is_placeholder=0)
+
+        _push(job_id, {"step": "Rebuilding PDF", "pct": 85})
+        book = db.get_book(book_id)
+        _rebuild_book_pdf(book)
+
+        db.update_job(job_id, status="done", step="Done", current=1, total=1)
+        _push(job_id, {"done": True, "book_id": book_id, "s3_url": _page_image_path(book_id, page_num)})
+    except Exception as e:
+        db.update_job(job_id, status="error", error=str(e))
+        _push(job_id, {"done": True, "error": str(e)})
+    finally:
+        _cleanup_queue(job_id)
+
+
 @app.route("/api/books/<book_id>/pages/<int:page_num>/regenerate", methods=["POST"])
 def regenerate_page(book_id, page_num):
     book = db.get_book(book_id)
@@ -772,25 +827,18 @@ def regenerate_page(book_id, page_num):
     page_chars = _page_characters(characters, {"characters_on_page": characters_on_page})
     reference_urls = _consistency_reference_urls(art_style_ref_url, page_chars)
 
-    try:
-        image_url = kie_client.generate_page_image(image_model, prompt, reference_image_urls=reference_urls)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 502
+    job_id = str(uuid.uuid4())
+    db.create_job(job_id)
+    _get_queue(job_id)
 
-    book_dir = BOOKS_DIR / book_id
-    pages_dir = book_dir / "pages"
-    pages_dir.mkdir(parents=True, exist_ok=True)
-    local_path = pages_dir / f"page-{page_num:03d}.jpg"
-    _download(image_url, local_path)
+    thread = threading.Thread(
+        target=_regenerate_page_job,
+        args=(job_id, book_id, page_num, image_model, prompt, reference_urls),
+        daemon=True,
+    )
+    thread.start()
 
-    r2_key = f"books/{book_id}/pages/page-{page_num:03d}.jpg"
-    r2_client.upload_file(str(local_path), r2_key)
-    db.update_page(book_id, page_num, s3_key=r2_key, image_prompt=prompt, is_placeholder=0)
-
-    book = db.get_book(book_id)
-    _rebuild_book_pdf(book)
-
-    return jsonify({"status": "ok", "s3_url": _page_image_path(book_id, page_num)})
+    return jsonify({"job_id": job_id, "status": "queued"})
 
 
 @app.route("/api/books/<book_id>", methods=["DELETE"])
