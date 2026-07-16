@@ -91,6 +91,10 @@ Return a single raw JSON object with NO markdown formatting, NO code fences, and
 The "pages" array must contain exactly {page_count} entries, page_num from 1 to {page_count}, following the story arc above. Every "characters_on_page" entry must exactly match a "name" in the "characters" array — always reference the correct life-stage variant for that point in the story (e.g. use "Baby Jesus" on early pages and "Adult Jesus" on later pages, never mix them on the same page unless the scene genuinely shows both). Age-appropriate language for target age {target_age}. Output ONLY the JSON object."""
 
 
+MAX_TOKENS = 64000
+GENERATION_RETRY_ATTEMPTS = 2
+
+
 def _extract_json(text):
     text = text.strip()
     if text.startswith("```"):
@@ -104,6 +108,27 @@ def _extract_json(text):
     return json.loads(text[start:end + 1])
 
 
+def _generate_blueprint_once(prompt, client):
+    # MAX_TOKENS is well above the ~16K threshold where non-streaming requests risk an SDK
+    # HTTP timeout, and a 150-page book's blueprint (this app's max page count) can itself
+    # need tens of thousands of tokens — streaming is required either way.
+    with client.messages.stream(
+        model=MODEL,
+        max_tokens=MAX_TOKENS,
+        messages=[{"role": "user", "content": prompt}],
+    ) as stream:
+        response = stream.get_final_message()
+
+    if response.stop_reason == "max_tokens":
+        raise RuntimeError(
+            "Claude's response was cut off before finishing the book blueprint "
+            f"(hit the {MAX_TOKENS}-token limit). Try again, or use a smaller page count."
+        )
+
+    text = "".join(block.text for block in response.content if block.type == "text")
+    return _extract_json(text)
+
+
 def generate_blueprint(
     book_title, target_age, theme, main_characters, art_style_preference, page_count, content_instruction=""
 ):
@@ -111,13 +136,18 @@ def generate_blueprint(
         book_title, target_age, theme, main_characters, art_style_preference, page_count, content_instruction
     )
     client = _client()
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=16000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = "".join(block.text for block in response.content if block.type == "text")
-    blueprint = _extract_json(text)
+
+    last_error = None
+    for attempt in range(1, GENERATION_RETRY_ATTEMPTS + 1):
+        try:
+            blueprint = _generate_blueprint_once(prompt, client)
+            break
+        except (ValueError, json.JSONDecodeError) as e:
+            # Malformed JSON in Claude's response is rare but not systemic (e.g. a stray
+            # unescaped character in generated prose) — a fresh attempt usually succeeds.
+            last_error = e
+    else:
+        raise last_error
 
     pages = blueprint.get("pages", [])
     if len(pages) != page_count:
