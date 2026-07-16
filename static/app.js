@@ -477,12 +477,14 @@ function renderPageThumb(bookId, page) {
       <span>Page ${page.page_num}${page.is_placeholder ? " ⚠" : ""}</span>
       <button type="button" class="btn-secondary btn-small" data-action="regen">Regenerate</button>
     </div>
+    <textarea class="page-prompt-input hint" rows="2" placeholder="Image prompt for this page — edit before regenerating">${escapeHtml(page.image_prompt || "")}</textarea>
     <p class="page-thumb-status hint"></p>
   `;
 
   const btn = wrap.querySelector('[data-action="regen"]');
   const statusEl = wrap.querySelector(".page-thumb-status");
   const img = wrap.querySelector("img");
+  const promptInput = wrap.querySelector(".page-prompt-input");
 
   btn.addEventListener("click", () => {
     btn.disabled = true;
@@ -491,7 +493,7 @@ function renderPageThumb(bookId, page) {
     fetch(`/api/books/${bookId}/pages/${page.page_num}/regenerate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ prompt: promptInput.value.trim() }),
     })
       .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
       .then(({ ok, data }) => {
