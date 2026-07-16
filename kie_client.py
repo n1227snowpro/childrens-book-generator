@@ -54,14 +54,15 @@ MODELS = {
 
 DEFAULT_MODEL = "nano-banana"
 
-# Widest aspect ratio each model actually supports (verified against docs.kie.ai
-# per-model parameter lists), used for wraparound cover art.
-_COVER_ASPECT_RATIO = {
-    "nano-banana": "3:2",
-    "flux-kontext-pro": "16:9",
-    "flux-kontext-max": "16:9",
-    "gpt-image-2": "3:2",
-}
+# Cover art always uses Nano Banana Pro (Gemini 3 Pro Image) regardless of the book's chosen
+# page-illustration model — sharper detail/text rendering and native 4K output make it a better
+# fit for a large printed wraparound cover than the per-page models. Verified against
+# docs.kie.ai/market/google/pro-image-to-image: model id "nano-banana-pro" (no "google/" prefix,
+# unlike the other Google models here), field is "image_input" (not "image_urls"), and "3:2" /
+# "4K" are both valid enum values for aspect_ratio / resolution.
+_COVER_MODEL = "nano-banana-pro"
+_COVER_ASPECT_RATIO_DEFAULT = "3:2"
+_COVER_RESOLUTION = "4K"
 
 
 def _headers():
@@ -162,6 +163,21 @@ def _generate_flux_kontext(prompt, model_id, reference_image_urls, aspect_ratio)
     return _poll_flux_kontext(task_id)
 
 
+def _generate_nano_banana_pro(prompt, reference_image_urls, aspect_ratio, resolution):
+    payload = {
+        "model": _COVER_MODEL,
+        "input": {
+            "prompt": prompt,
+            "image_input": reference_image_urls or [],
+            "aspect_ratio": aspect_ratio,
+            "resolution": resolution,
+            "output_format": "jpg",
+        },
+    }
+    task_id = _create_task("/jobs/createTask", payload)
+    return _poll_unified(task_id)
+
+
 def _generate_gpt_image_2(prompt, reference_image_urls, aspect_ratio):
     if reference_image_urls:
         payload = {
@@ -222,8 +238,18 @@ def generate_page_image(model_id, prompt, reference_image_urls=None):
 
 
 def generate_cover_image(model_id, prompt, reference_image_urls=None):
-    aspect_ratio = _COVER_ASPECT_RATIO.get(model_id, "3:2")
-    return generate_image(model_id, prompt, reference_image_urls=reference_image_urls, aspect_ratio=aspect_ratio)
+    """model_id is accepted for call-site compatibility but ignored — cover art always uses
+    Nano Banana Pro (see _COVER_MODEL above), regardless of which model the book's pages use."""
+    if isinstance(reference_image_urls, str):
+        reference_image_urls = [reference_image_urls]
+    reference_image_urls = [u for u in (reference_image_urls or []) if u][:MAX_REFERENCE_IMAGES]
+
+    def _attempt():
+        return _generate_nano_banana_pro(
+            prompt, reference_image_urls, _COVER_ASPECT_RATIO_DEFAULT, _COVER_RESOLUTION
+        )
+
+    return _with_retry(_attempt)
 
 
 def generate_pages_concurrent(
