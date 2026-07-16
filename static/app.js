@@ -282,10 +282,13 @@ function renderHistoryCard(book) {
       ${book.cover_url ? `<a class="btn-primary" href="${book.cover_url}" target="_blank">Download Cover</a>` : ""}
       ${book.can_continue ? `<button type="button" class="btn-primary" data-action="continue">Continue</button>` : ""}
       ${book.can_regenerate_cover ? `<button type="button" class="btn-secondary" data-action="regen-cover">Regenerate Cover</button>` : ""}
+      ${book.pdf_url ? `<button type="button" class="btn-secondary" data-action="rebuild-pdf">Rebuild PDF</button>` : ""}
       <button type="button" class="btn-secondary" data-action="toggle-pages">View Pages</button>
       <button type="button" class="btn-secondary" data-action="delete">Delete</button>
     </div>
     <p class="hint continue-status hidden"></p>
+    <p class="hint rebuild-status hidden"></p>
+    ${book.pdf_url ? `<p class="hint">Regenerating page images below updates the images only — click "Rebuild PDF" once you're happy with them to fold the changes into the PDF.</p>` : ""}
     <div class="history-pages hidden"></div>
   `;
 
@@ -332,6 +335,52 @@ function renderHistoryCard(book) {
           continueStatus.textContent = err.message;
           continueStatus.classList.add("error");
           regenCoverBtn.disabled = false;
+        });
+    });
+  }
+
+  const rebuildPdfBtn = card.querySelector('[data-action="rebuild-pdf"]');
+  if (rebuildPdfBtn) {
+    const rebuildStatus = card.querySelector(".rebuild-status");
+    rebuildPdfBtn.addEventListener("click", () => {
+      rebuildPdfBtn.disabled = true;
+      rebuildStatus.classList.remove("hidden", "error");
+      rebuildStatus.textContent = "Starting…";
+
+      fetch(`/api/books/${book.book_id}/rebuild-pdf`, { method: "POST" })
+        .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+        .then(({ ok, data }) => {
+          if (!ok) throw new Error(data.error || "Failed to rebuild PDF");
+
+          const source = new EventSource(`/api/books/stream/${data.job_id}`);
+          source.onmessage = (event) => {
+            const evt = JSON.parse(event.data);
+            if (evt.error) {
+              rebuildStatus.textContent = evt.error;
+              rebuildStatus.classList.add("error");
+              source.close();
+              rebuildPdfBtn.disabled = false;
+              return;
+            }
+            if (evt.step) {
+              rebuildStatus.textContent =
+                typeof evt.pct === "number" ? `${evt.step} (${evt.pct}%)` : evt.step;
+            }
+            if (evt.done) {
+              source.close();
+              rebuildStatus.textContent = "PDF rebuilt.";
+              rebuildPdfBtn.disabled = false;
+            }
+          };
+          source.onerror = () => {
+            source.close();
+            rebuildPdfBtn.disabled = false;
+          };
+        })
+        .catch((err) => {
+          rebuildStatus.textContent = err.message;
+          rebuildStatus.classList.add("error");
+          rebuildPdfBtn.disabled = false;
         });
     });
   }

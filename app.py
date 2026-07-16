@@ -745,15 +745,16 @@ def page_image(book_id, page_num):
     return redirect(r2_client.presigned_url(page["s3_key"]))
 
 
-def _rebuild_book_pdf(book):
+def _rebuild_book_pdf(book, on_progress=None):
     book_dir = BOOKS_DIR / book["book_id"]
     pages_dir = book_dir / "pages"
     final_dir = book_dir / "final"
     pages_dir.mkdir(parents=True, exist_ok=True)
     final_dir.mkdir(parents=True, exist_ok=True)
 
+    sorted_pages = sorted(book["pages"], key=lambda x: x["page_num"])
     pages_for_pdf = []
-    for p in sorted(book["pages"], key=lambda x: x["page_num"]):
+    for i, p in enumerate(sorted_pages):
         local_path = pages_dir / f"page-{p['page_num']:03d}.jpg"
         if not local_path.exists() and p.get("s3_key"):
             _download(r2_client.presigned_url(p["s3_key"]), local_path)
@@ -762,6 +763,8 @@ def _rebuild_book_pdf(book):
             "image_path": str(local_path),
             "story_text": p.get("story_text", ""),
         })
+        if on_progress:
+            on_progress(i + 1, len(sorted_pages))
 
     slug = _slugify(book["title"])
     pdf_path = final_dir / f"{slug}.pdf"
@@ -773,26 +776,26 @@ def _rebuild_book_pdf(book):
 
 
 def _regenerate_page_job(job_id, book_id, page_num, image_model, prompt, reference_urls):
+    """Regenerates a single page's image only. Does NOT rebuild the PDF — with many pages queued
+    for regeneration, rebuilding after every single one would be slow and redundant (and racy if
+    two regenerates run concurrently). The PDF is rebuilt on demand via a separate job/button once
+    the user is happy with all the images they've regenerated."""
     try:
         db.update_job(job_id, status="running", book_id=book_id)
-        _push(job_id, {"step": "Generating image", "pct": 15})
+        _push(job_id, {"step": "Generating image", "pct": 20})
         image_url = kie_client.generate_page_image(image_model, prompt, reference_image_urls=reference_urls)
 
-        _push(job_id, {"step": "Downloading image", "pct": 55})
+        _push(job_id, {"step": "Downloading image", "pct": 60})
         book_dir = BOOKS_DIR / book_id
         pages_dir = book_dir / "pages"
         pages_dir.mkdir(parents=True, exist_ok=True)
         local_path = pages_dir / f"page-{page_num:03d}.jpg"
         _download(image_url, local_path)
 
-        _push(job_id, {"step": "Uploading image", "pct": 70})
+        _push(job_id, {"step": "Uploading image", "pct": 85})
         r2_key = f"books/{book_id}/pages/page-{page_num:03d}.jpg"
         r2_client.upload_file(str(local_path), r2_key)
         db.update_page(book_id, page_num, s3_key=r2_key, image_prompt=prompt, is_placeholder=0)
-
-        _push(job_id, {"step": "Rebuilding PDF", "pct": 85})
-        book = db.get_book(book_id)
-        _rebuild_book_pdf(book)
 
         db.update_job(job_id, status="done", step="Done", current=1, total=1)
         _push(job_id, {"done": True, "book_id": book_id, "s3_url": _page_image_path(book_id, page_num)})
@@ -801,6 +804,50 @@ def _regenerate_page_job(job_id, book_id, page_num, image_model, prompt, referen
         _push(job_id, {"done": True, "error": str(e)})
     finally:
         _cleanup_queue(job_id)
+
+
+def _rebuild_pdf_job(job_id, book_id):
+    try:
+        db.update_job(job_id, status="running", book_id=book_id)
+        book = db.get_book(book_id)
+        if not book:
+            raise RuntimeError("Book not found")
+        if not book["pages"]:
+            raise RuntimeError("This book has no pages yet")
+
+        def on_progress(current, total):
+            pct = 10 + round(70 * current / total) if total else 10
+            _push(job_id, {"step": f"Collecting page images ({current}/{total})", "pct": pct})
+
+        _push(job_id, {"step": "Starting PDF rebuild", "pct": 5})
+        _rebuild_book_pdf(book, on_progress=on_progress)
+
+        pdf_url = _download_path(book_id)
+        db.update_job(job_id, status="done", step="Done", current=1, total=1, pdf_url=pdf_url)
+        _push(job_id, {"done": True, "book_id": book_id, "pdf_url": pdf_url})
+    except Exception as e:
+        db.update_job(job_id, status="error", error=str(e))
+        _push(job_id, {"done": True, "error": str(e)})
+    finally:
+        _cleanup_queue(job_id)
+
+
+@app.route("/api/books/<book_id>/rebuild-pdf", methods=["POST"])
+def rebuild_pdf(book_id):
+    book = db.get_book(book_id)
+    if not book:
+        return jsonify({"error": "not found"}), 404
+    if not book["pages"]:
+        return jsonify({"error": "This book has no pages yet"}), 400
+
+    job_id = str(uuid.uuid4())
+    db.create_job(job_id)
+    _get_queue(job_id)
+
+    thread = threading.Thread(target=_rebuild_pdf_job, args=(job_id, book_id), daemon=True)
+    thread.start()
+
+    return jsonify({"job_id": job_id, "status": "queued"})
 
 
 @app.route("/api/books/<book_id>/pages/<int:page_num>/regenerate", methods=["POST"])
