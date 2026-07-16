@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import threading
+import time
 import uuid
 from pathlib import Path
 from queue import Queue
@@ -76,12 +77,21 @@ def _slugify(text):
     return text or "book"
 
 
-def _download(url, dest_path):
-    with requests.get(url, stream=True, timeout=120) as r:
-        r.raise_for_status()
-        with open(dest_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
+def _download(url, dest_path, attempts=3, backoff=3):
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            with requests.get(url, stream=True, timeout=120) as r:
+                r.raise_for_status()
+                with open(dest_path, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            return
+        except Exception as e:
+            last_error = e
+            if attempt < attempts:
+                time.sleep(backoff * attempt)
+    raise last_error
 
 
 def _build_placeholder_image(path, text):
@@ -219,22 +229,30 @@ def _run_pipeline(job_id, params, uploaded_paths):
         image_urls, page_errors = kie_client.generate_pages_concurrent(
             image_model, page_prompts, max_workers=5, on_complete=on_complete
         )
-        failed_pages = [pages[i].get("page_num", i + 1) for i, err in enumerate(page_errors) if err]
 
         pages_for_pdf = []
+        placeholder_pages = []
         _set_progress(job_id, "page_uploads", "Uploading pages to storage", 0, total_pages)
         for idx, page in enumerate(pages):
             page_num = page.get("page_num", idx + 1)
             local_path = pages_dir / f"page-{page_num:03d}.jpg"
+            is_placeholder = not image_urls[idx]
+
             if image_urls[idx]:
-                _download(image_urls[idx], local_path)
-            else:
+                try:
+                    _download(image_urls[idx], local_path)
+                except Exception:
+                    is_placeholder = True
+
+            if is_placeholder:
                 _build_placeholder_image(local_path, f"Illustration unavailable for page {page_num}")
+                placeholder_pages.append(page_num)
+
             r2_key = f"books/{book_id}/pages/page-{page_num:03d}.jpg"
             s3_key = r2_client.upload_file(str(local_path), r2_key)
             db.add_page(
                 book_id, page_num, s3_key, page.get("story_text", ""),
-                image_prompt=page_prompts[idx], is_placeholder=not image_urls[idx],
+                image_prompt=page_prompts[idx], is_placeholder=is_placeholder,
             )
             pages_for_pdf.append({
                 "page_num": page_num,
@@ -288,10 +306,10 @@ def _run_pipeline(job_id, params, uploaded_paths):
         pdf_url = _download_path(book_id)
         cover_url = _cover_path(book_id) if cover_key else None
         warning = None
-        if failed_pages:
-            page_list = ", ".join(str(p) for p in failed_pages)
+        if placeholder_pages:
+            page_list = ", ".join(str(p) for p in placeholder_pages)
             warning = (
-                f"{len(failed_pages)} page(s) could not be illustrated after retries "
+                f"{len(placeholder_pages)} page(s) could not be illustrated after retries "
                 f"(page {page_list}) — a placeholder was used instead."
             )
         db.update_book(book_id, pdf_key=pdf_key, cover_key=cover_key, status="done")
