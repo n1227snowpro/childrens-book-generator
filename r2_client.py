@@ -1,10 +1,17 @@
 import mimetypes
 
 import boto3
+from botocore.config import Config
 
 import settings
 
 PRESIGNED_URL_EXPIRES_IN = 3600
+
+# Without an explicit Config, boto3's read/connect timeouts are effectively unbounded on some
+# botocore versions, so a stalled connection (flaky network, R2-side hiccup) can hang a request
+# far longer than any caller would want — this was traced to a "Rebuild PDF" job that hung
+# indefinitely after a stalled upload, with no exception ever surfacing to the SSE stream.
+_S3_CONFIG = Config(connect_timeout=15, read_timeout=90, retries={"max_attempts": 3, "mode": "standard"})
 
 
 def _get_client():
@@ -14,6 +21,7 @@ def _get_client():
         aws_access_key_id=settings.get("R2_ACCESS_KEY"),
         aws_secret_access_key=settings.get("R2_SECRET_KEY"),
         region_name="auto",
+        config=_S3_CONFIG,
     )
 
 

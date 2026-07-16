@@ -9,6 +9,8 @@ import shutil
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 from queue import Queue
 
@@ -75,6 +77,22 @@ def _set_progress(job_id, stage, step_text, current, total):
 def _slugify(text):
     text = re.sub(r"[^a-zA-Z0-9]+", "-", text or "").strip("-").lower()
     return text or "book"
+
+
+def _run_with_timeout(fn, timeout_seconds):
+    """Runs fn() in a worker thread and raises TimeoutError if it doesn't finish in time.
+    Belt-and-suspenders for background jobs: no matter what stalls inside fn (a network call
+    without its own timeout, or anything else), the caller gets an exception back within a bounded
+    time instead of the job — and its SSE stream — hanging forever with no way for the user to
+    know or retry. Doesn't cancel the underlying thread (Python can't do that); it just stops
+    waiting on it."""
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        return pool.submit(fn).result(timeout=timeout_seconds)
+    except FutureTimeoutError:
+        raise TimeoutError(f"Operation timed out after {timeout_seconds}s")
+    finally:
+        pool.shutdown(wait=False)
 
 
 def _download(url, dest_path, attempts=3, backoff=3):
@@ -820,7 +838,7 @@ def _rebuild_pdf_job(job_id, book_id):
             _push(job_id, {"step": f"Collecting page images ({current}/{total})", "pct": pct})
 
         _push(job_id, {"step": "Starting PDF rebuild", "pct": 5})
-        _rebuild_book_pdf(book, on_progress=on_progress)
+        _run_with_timeout(lambda: _rebuild_book_pdf(book, on_progress=on_progress), timeout_seconds=600)
 
         pdf_url = _download_path(book_id)
         db.update_job(job_id, status="done", step="Done", current=1, total=1, pdf_url=pdf_url)
