@@ -59,7 +59,13 @@ def init_db():
                 created_at TEXT NOT NULL,
                 status TEXT NOT NULL,
                 image_model TEXT,
-                cover_key TEXT
+                cover_key TEXT,
+                target_age TEXT,
+                theme TEXT,
+                content_instruction TEXT,
+                main_characters TEXT,
+                art_style_preference TEXT,
+                blueprint_json TEXT
             )
         """)
         try:
@@ -74,6 +80,12 @@ def init_db():
             conn.execute("ALTER TABLE books RENAME COLUMN pdf_url TO pdf_key")
         except sqlite3.OperationalError:
             pass
+        for _col in ("target_age", "theme", "content_instruction", "main_characters",
+                     "art_style_preference", "blueprint_json"):
+            try:
+                conn.execute(f"ALTER TABLE books ADD COLUMN {_col} TEXT")
+            except sqlite3.OperationalError:
+                pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS pages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -149,12 +161,21 @@ def get_job(job_id):
         return dict(row) if row else None
 
 
-def create_book(book_id, title, page_count, status="running", image_model=None):
+def create_book(
+    book_id, title, page_count, status="running", image_model=None,
+    target_age=None, theme=None, content_instruction=None, main_characters=None,
+    art_style_preference=None, blueprint_json=None,
+):
     with _lock, get_conn() as conn:
         conn.execute(
-            "INSERT INTO books (book_id, title, page_count, pdf_key, created_at, status, image_model) "
-            "VALUES (?, ?, ?, NULL, ?, ?, ?)",
-            (book_id, title, page_count, _now(), status, image_model),
+            "INSERT INTO books (book_id, title, page_count, pdf_key, created_at, status, image_model, "
+            "target_age, theme, content_instruction, main_characters, art_style_preference, blueprint_json) "
+            "VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                book_id, title, page_count, _now(), status, image_model,
+                target_age, theme, content_instruction, main_characters,
+                art_style_preference, blueprint_json,
+            ),
         )
 
 

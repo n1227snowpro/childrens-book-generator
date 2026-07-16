@@ -280,11 +280,59 @@ function renderHistoryCard(book) {
     <div class="result-actions">
       ${book.pdf_url ? `<a class="btn-primary" href="${book.pdf_url}" target="_blank">Download PDF</a>` : ""}
       ${book.cover_url ? `<a class="btn-primary" href="${book.cover_url}" target="_blank">Download Cover</a>` : ""}
+      ${book.can_continue ? `<button type="button" class="btn-primary" data-action="continue">Continue</button>` : ""}
       <button type="button" class="btn-secondary" data-action="toggle-pages">View Pages</button>
       <button type="button" class="btn-secondary" data-action="delete">Delete</button>
     </div>
+    <p class="hint continue-status hidden"></p>
     <div class="history-pages hidden"></div>
   `;
+
+  const continueBtn = card.querySelector('[data-action="continue"]');
+  if (continueBtn) {
+    const continueStatus = card.querySelector(".continue-status");
+    continueBtn.addEventListener("click", () => {
+      continueBtn.disabled = true;
+      continueStatus.classList.remove("hidden", "error");
+      continueStatus.textContent = "Starting…";
+
+      fetch(`/api/books/${book.book_id}/continue`, { method: "POST" })
+        .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+        .then(({ ok, data }) => {
+          if (!ok) throw new Error(data.error || "Failed to continue");
+
+          const source = new EventSource(`/api/books/stream/${data.job_id}`);
+          source.onmessage = (event) => {
+            const evt = JSON.parse(event.data);
+            if (evt.error) {
+              continueStatus.textContent = evt.error;
+              continueStatus.classList.add("error");
+              source.close();
+              continueBtn.disabled = false;
+              return;
+            }
+            if (evt.step) {
+              continueStatus.textContent =
+                typeof evt.pct === "number" ? `${evt.step} (${evt.pct}%)` : evt.step;
+            }
+            if (evt.done) {
+              source.close();
+              continueStatus.textContent = evt.warning || "Done!";
+              loadHistory();
+            }
+          };
+          source.onerror = () => {
+            source.close();
+            continueBtn.disabled = false;
+          };
+        })
+        .catch((err) => {
+          continueStatus.textContent = err.message;
+          continueStatus.classList.add("error");
+          continueBtn.disabled = false;
+        });
+    });
+  }
 
   const pagesEl = card.querySelector(".history-pages");
   card.querySelector('[data-action="toggle-pages"]').addEventListener("click", async () => {

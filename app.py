@@ -135,26 +135,40 @@ def _page_image_path(book_id, page_num):
     return f"/api/books/{book_id}/pages/{page_num}/image"
 
 
-def _run_pipeline(job_id, params, uploaded_paths):
-    book_id = str(uuid.uuid4())
+def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
+    book_id = resume_book_id or str(uuid.uuid4())
     image_model = params["image_model"]
     try:
-        db.update_job(job_id, status="running")
-        _set_progress(job_id, "blueprint", "Generating blueprint", 0, 1)
+        db.update_job(job_id, status="running", book_id=book_id)
 
-        blueprint = claude_client.generate_blueprint(
-            params["book_title"],
-            params["target_age"],
-            params["theme"],
-            params["main_characters"],
-            params["art_style_preference"],
-            params["page_count"],
-            params["content_instruction"],
-        )
-        _set_progress(job_id, "blueprint", "Generating blueprint", 1, 1)
+        if resume_book_id:
+            existing_book = db.get_book(book_id)
+            blueprint = json.loads(existing_book["blueprint_json"])
+            title = existing_book["title"]
+            db.update_book(book_id, status="running")
+            _set_progress(job_id, "blueprint", "Reusing saved story", 1, 1)
+        else:
+            _set_progress(job_id, "blueprint", "Generating blueprint", 0, 1)
+            blueprint = claude_client.generate_blueprint(
+                params["book_title"],
+                params["target_age"],
+                params["theme"],
+                params["main_characters"],
+                params["art_style_preference"],
+                params["page_count"],
+                params["content_instruction"],
+            )
+            _set_progress(job_id, "blueprint", "Generating blueprint", 1, 1)
 
-        title = blueprint.get("book_title") or params["book_title"]
-        db.create_book(book_id, title, params["page_count"], status="running", image_model=image_model)
+            title = blueprint.get("book_title") or params["book_title"]
+            db.create_book(
+                book_id, title, params["page_count"], status="running", image_model=image_model,
+                target_age=params["target_age"], theme=params["theme"],
+                content_instruction=params["content_instruction"],
+                main_characters=params["main_characters"],
+                art_style_preference=params["art_style_preference"],
+                blueprint_json=json.dumps(blueprint),
+            )
 
         book_dir = BOOKS_DIR / book_id
         pages_dir = book_dir / "pages"
@@ -213,22 +227,41 @@ def _run_pipeline(job_id, params, uploaded_paths):
         page_prompts = [f"{art_style} {p.get('image_prompt', '')} Characters: {char_desc_joined}" for p in pages]
         total_pages = len(page_prompts)
 
-        progress_lock = threading.Lock()
-        completed = {"n": 0}
+        existing_pages = {p["page_num"]: p for p in db.get_book(book_id)["pages"]} if resume_book_id else {}
 
-        def on_complete(_index, error):
-            with progress_lock:
-                completed["n"] += 1
-                suffix = " (failed after retries, will use a placeholder)" if error else ""
-                _set_progress(
-                    job_id, "pages", f"Generating page {completed['n']}/{total_pages}{suffix}",
-                    completed["n"], total_pages,
-                )
+        def _page_already_done(page_num):
+            existing = existing_pages.get(page_num)
+            return bool(existing) and not existing["is_placeholder"]
 
-        _set_progress(job_id, "pages", f"Generating page 0/{total_pages}", 0, total_pages)
-        image_urls, page_errors = kie_client.generate_pages_concurrent(
-            image_model, page_prompts, max_workers=5, on_complete=on_complete
-        )
+        needs_generation = [i for i, p in enumerate(pages) if not _page_already_done(p.get("page_num", i + 1))]
+
+        image_urls = [None] * total_pages
+        page_errors = [None] * total_pages
+        prompts_to_generate = [page_prompts[i] for i in needs_generation]
+
+        if prompts_to_generate:
+            progress_lock = threading.Lock()
+            completed = {"n": 0}
+
+            def on_complete(_sub_index, error):
+                with progress_lock:
+                    completed["n"] += 1
+                    suffix = " (failed after retries, will use a placeholder)" if error else ""
+                    _set_progress(
+                        job_id, "pages",
+                        f"Generating page {completed['n']}/{len(prompts_to_generate)}{suffix}",
+                        completed["n"], len(prompts_to_generate),
+                    )
+
+            _set_progress(job_id, "pages", f"Generating page 0/{len(prompts_to_generate)}", 0, len(prompts_to_generate))
+            partial_urls, partial_errors = kie_client.generate_pages_concurrent(
+                image_model, prompts_to_generate, max_workers=5, on_complete=on_complete
+            )
+            for sub_i, real_i in enumerate(needs_generation):
+                image_urls[real_i] = partial_urls[sub_i]
+                page_errors[real_i] = partial_errors[sub_i]
+        else:
+            _set_progress(job_id, "pages", "All pages already illustrated", 1, 1)
 
         pages_for_pdf = []
         placeholder_pages = []
@@ -236,6 +269,19 @@ def _run_pipeline(job_id, params, uploaded_paths):
         for idx, page in enumerate(pages):
             page_num = page.get("page_num", idx + 1)
             local_path = pages_dir / f"page-{page_num:03d}.jpg"
+            existing = existing_pages.get(page_num)
+
+            if idx not in needs_generation and existing:
+                if not local_path.exists():
+                    _download(r2_client.presigned_url(existing["s3_key"]), local_path)
+                pages_for_pdf.append({
+                    "page_num": page_num,
+                    "image_path": str(local_path),
+                    "story_text": existing.get("story_text") or page.get("story_text", ""),
+                })
+                _set_progress(job_id, "page_uploads", f"Reusing page {idx + 1}/{total_pages}", idx + 1, total_pages)
+                continue
+
             is_placeholder = not image_urls[idx]
 
             if image_urls[idx]:
@@ -250,10 +296,14 @@ def _run_pipeline(job_id, params, uploaded_paths):
 
             r2_key = f"books/{book_id}/pages/page-{page_num:03d}.jpg"
             s3_key = r2_client.upload_file(str(local_path), r2_key)
-            db.add_page(
-                book_id, page_num, s3_key, page.get("story_text", ""),
+            page_fields = dict(
+                s3_key=s3_key, story_text=page.get("story_text", ""),
                 image_prompt=page_prompts[idx], is_placeholder=is_placeholder,
             )
+            if existing:
+                db.update_page(book_id, page_num, **page_fields)
+            else:
+                db.add_page(book_id, page_num, **page_fields)
             pages_for_pdf.append({
                 "page_num": page_num,
                 "image_path": str(local_path),
@@ -270,32 +320,33 @@ def _run_pipeline(job_id, params, uploaded_paths):
         _set_progress(job_id, "pdf", "Compiling PDF", 1, 1)
 
         _set_progress(job_id, "cover", "Generating cover art", 0, 1)
-        cover_key = None
-        try:
-            primary_char = characters[0] if characters else None
-            cover_ref_url = None
-            if primary_char and primary_char.get("s3_key"):
-                cover_ref_url = r2_client.presigned_url(primary_char["s3_key"])
+        cover_key = existing_book.get("cover_key") if resume_book_id else None
+        if not cover_key:
+            try:
+                primary_char = characters[0] if characters else None
+                cover_ref_url = None
+                if primary_char and primary_char.get("s3_key"):
+                    cover_ref_url = r2_client.presigned_url(primary_char["s3_key"])
 
-            cover_prompt = (
-                f"{art_style} Wraparound children's book cover illustration for '{title}'. "
-                f"Theme: {params['theme']}. Featuring: {char_desc_joined}. "
-                "Leave open, uncluttered space on the right-hand side for a title."
-            )
-            cover_image_url = kie_client.generate_cover_image(
-                image_model, cover_prompt, reference_image_url=cover_ref_url
-            )
-            cover_image_path = final_dir / "cover-art.jpg"
-            _download(cover_image_url, cover_image_path)
+                cover_prompt = (
+                    f"{art_style} Wraparound children's book cover illustration for '{title}'. "
+                    f"Theme: {params['theme']}. Featuring: {char_desc_joined}. "
+                    "Leave open, uncluttered space on the right-hand side for a title."
+                )
+                cover_image_url = kie_client.generate_cover_image(
+                    image_model, cover_prompt, reference_image_url=cover_ref_url
+                )
+                cover_image_path = final_dir / "cover-art.jpg"
+                _download(cover_image_url, cover_image_path)
 
-            cover_pdf_path = final_dir / f"{slug}-cover.pdf"
-            cover_builder.build_cover_pdf(
-                str(cover_image_path), title, title, params["page_count"], cover_pdf_path
-            )
-            cover_key = f"books/{book_id}/final/{slug}-cover.pdf"
-            r2_client.upload_file(str(cover_pdf_path), cover_key)
-        except Exception:
-            cover_key = None
+                cover_pdf_path = final_dir / f"{slug}-cover.pdf"
+                cover_builder.build_cover_pdf(
+                    str(cover_image_path), title, title, params["page_count"], cover_pdf_path
+                )
+                cover_key = f"books/{book_id}/final/{slug}-cover.pdf"
+                r2_client.upload_file(str(cover_pdf_path), cover_key)
+            except Exception:
+                cover_key = None
         _set_progress(job_id, "cover", "Generating cover art", 1, 1)
 
         _set_progress(job_id, "final_upload", "Uploading final PDF", 0, 1)
@@ -482,6 +533,8 @@ def _serialize_book(book):
     book.pop("pdf_key", None)
     book["cover_url"] = _cover_path(book["book_id"]) if book.get("cover_key") else None
     book.pop("cover_key", None)
+    book["can_continue"] = book["status"] == "error" and bool(book.get("blueprint_json"))
+    book.pop("blueprint_json", None)
     book["cover_dimensions"] = cover_builder.calculate_dimensions(book["page_count"])
     if "pages" in book:
         pages = []
@@ -615,6 +668,40 @@ def delete_book(book_id):
         shutil.rmtree(book_dir, ignore_errors=True)
     db.delete_book(book_id)
     return jsonify({"status": "deleted"})
+
+
+@app.route("/api/books/<book_id>/continue", methods=["POST"])
+def continue_book(book_id):
+    book = db.get_book(book_id)
+    if not book:
+        return jsonify({"error": "not found"}), 404
+    if book["status"] != "error":
+        return jsonify({"error": "Only books that failed can be continued"}), 400
+    if not book.get("blueprint_json"):
+        return jsonify({"error": "No saved story data for this book — generate a new one instead"}), 400
+
+    job_id = str(uuid.uuid4())
+    db.create_job(job_id)
+    db.update_job(job_id, book_id=book_id)
+    _get_queue(job_id)
+
+    params = dict(
+        book_title=book["title"],
+        target_age=book.get("target_age") or "4-8",
+        theme=book.get("theme") or "",
+        content_instruction=book.get("content_instruction") or "",
+        main_characters=book.get("main_characters") or "",
+        art_style_preference=book.get("art_style_preference") or "",
+        page_count=book["page_count"],
+        image_model=book.get("image_model") or kie_client.DEFAULT_MODEL,
+    )
+
+    thread = threading.Thread(
+        target=_run_pipeline, args=(job_id, params, []), kwargs={"resume_book_id": book_id}, daemon=True
+    )
+    thread.start()
+
+    return jsonify({"job_id": job_id, "status": "queued", "book_id": book_id})
 
 
 def _serialize_character(char):
