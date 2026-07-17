@@ -183,11 +183,18 @@ def _character_names_joined(characters):
 def _page_characters(characters, page):
     """Restricts a page's reference images to only the characters actually present on that
     page (per Claude's characters_on_page field), so a character shown at different ages/life
-    stages doesn't get conditioned on the wrong stage's reference image. Falls back to every
-    character if the page didn't specify (e.g. older blueprints, or a Claude omission)."""
+    stages doesn't get conditioned on the wrong stage's reference image.
+
+    None (the field is entirely missing — older blueprints predating this field) falls back to
+    every character. [] (Claude explicitly listed no characters — a landscape/establishing-shot
+    page) must NOT fall back to every character: sending every character's reference photo for a
+    scene that shows none of them was confirmed live to trigger KIE.ai's nano-banana-edit
+    "invalid param" rejection, on top of being semantically wrong."""
     names_on_page = page.get("characters_on_page")
-    if not names_on_page:
+    if names_on_page is None:
         return characters
+    if not names_on_page:
+        return []
     wanted = {n.strip().lower() for n in names_on_page if n}
     matched = [c for c in characters if (c.get("name") or "").strip().lower() in wanted]
     return matched or characters

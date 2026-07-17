@@ -127,11 +127,15 @@ def _poll_flux_kontext(task_id, timeout=POLL_TIMEOUT_SECONDS):
 
 def _generate_nano_banana(prompt, reference_image_urls, aspect_ratio):
     if reference_image_urls:
+        # docs.kie.ai claims nano-banana-edit accepts up to 10 image_urls, but live testing
+        # against the same prompt found 1 and 3 references succeed while 5 reliably returns a
+        # generic "invalid param" — the documented limit doesn't match what the API actually
+        # accepts. Capped well under the confirmed-safe threshold.
         payload = {
             "model": "google/nano-banana-edit",
             "input": {
                 "prompt": prompt,
-                "image_urls": reference_image_urls,
+                "image_urls": reference_image_urls[:NANO_BANANA_MAX_REFERENCE_IMAGES],
                 "output_format": "jpeg",
                 "aspect_ratio": aspect_ratio,
             },
@@ -203,6 +207,7 @@ def _generate_gpt_image_2(prompt, reference_image_urls, aspect_ratio):
 
 
 MAX_REFERENCE_IMAGES = 8
+NANO_BANANA_MAX_REFERENCE_IMAGES = 3
 
 
 def generate_image(model_id, prompt, reference_image_urls=None, aspect_ratio="1:1"):
