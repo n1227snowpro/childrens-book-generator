@@ -201,11 +201,23 @@ def _page_characters(characters, page):
 
 
 def _build_cover_prompt(title, theme, characters, reference_urls):
+    # The AI renders the title directly into the artwork (no code-drawn overlay — see
+    # cover_builder.py), so keeping it inside KDP's safe area is prompt-guidance only, not
+    # something we can enforce after the fact. cover_builder's real geometry (WRAP_IN=0.591in
+    # bleed that gets trimmed off the top/right/bottom edges, plus ~0.375in further safety margin
+    # like the interior pages use) works out to roughly 8% of the full spread's width and 8% of
+    # its height as the bare technical minimum — these numbers add a buffer on top of that so a
+    # generation that slightly undershoots the instruction still lands safely inside the trim line.
     prompt = (
         f"Wraparound children's book cover illustration for '{title}'. "
         f"Render the title text \"{title}\" prominently and legibly as part of the illustration, "
-        "placed on the front-facing right-hand panel with generous margin from all edges and clear "
-        "of the spine fold. Theme: " + theme + "."
+        "placed on the front-facing right-hand panel of the spread, well clear of the spine fold "
+        "in the middle. The full image gets trimmed along its outer edges and wrapped around the "
+        "book during printing, so nothing important — especially any text — can sit near an edge: "
+        "leave at least 12% of the image's total height as empty space above the title, and at "
+        "least 10% of the image's total width as empty space to the right of the title and between "
+        "the title and the spine fold in the middle. No letter should touch or extend past the "
+        "top, right, or bottom edge of the image. Theme: " + theme + "."
     )
     names = _character_names_joined(characters)
     if names:
