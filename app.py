@@ -200,6 +200,19 @@ def _page_characters(characters, page):
     return matched or characters
 
 
+COVER_MAX_CHARACTERS = 3
+
+
+def _cover_characters(characters):
+    """Unlike pages, a cover has no characters_on_page-equivalent telling us who'll actually
+    appear in the composition, so a book with many characters (e.g. an 11-character book) would
+    otherwise send every one of them as a reference image and list all their names in the prompt.
+    That dilutes how closely any single reference gets followed — confirmed live for page
+    generation (see _page_characters/NANO_BANANA_MAX_REFERENCE_IMAGES) and the same failure mode
+    applies here. Capping to a small subset keeps the ones that ARE sent from getting diluted."""
+    return characters[:COVER_MAX_CHARACTERS]
+
+
 def _build_cover_prompt(title, theme, characters, reference_urls):
     # The AI renders the title directly into the artwork (no code-drawn overlay — see
     # cover_builder.py), so keeping it inside KDP's safe area is prompt-guidance only, not
@@ -346,8 +359,10 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
             _set_progress(job_id, "characters", step_text, i + 1, len(characters))
 
         pages = blueprint["pages"]
-        # Full set, used for the cover (which isn't tied to one story moment).
-        page_reference_urls = _consistency_reference_urls(art_style_ref_url, characters)
+        # Used for the cover (which isn't tied to one story moment) — capped to a few characters
+        # so their references don't get diluted; see _cover_characters.
+        cover_characters = _cover_characters(characters)
+        cover_reference_urls = _consistency_reference_urls(art_style_ref_url, cover_characters)
 
         page_prompts = []
         page_reference_urls_per_page = []
@@ -462,9 +477,9 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
         cover_key = existing_book.get("cover_key") if resume_book_id else None
         if not cover_key:
             try:
-                cover_prompt = _build_cover_prompt(title, params["theme"], characters, page_reference_urls)
+                cover_prompt = _build_cover_prompt(title, params["theme"], cover_characters, cover_reference_urls)
                 cover_image_url = kie_client.generate_cover_image(
-                    image_model, cover_prompt, reference_image_urls=page_reference_urls
+                    image_model, cover_prompt, reference_image_urls=cover_reference_urls
                 )
                 cover_image_path = final_dir / "cover-art.jpg"
                 _download(cover_image_url, cover_image_path)
@@ -753,8 +768,9 @@ def regenerate_cover(book_id):
     image_model = book.get("image_model") or kie_client.DEFAULT_MODEL
     characters, _art_style, title = _load_characters_with_refs(book)
     art_style_ref_url = r2_client.presigned_url(book["art_style_ref_key"]) if book.get("art_style_ref_key") else None
-    reference_urls = _consistency_reference_urls(art_style_ref_url, characters)
-    cover_prompt = _build_cover_prompt(title, book.get("theme") or "", characters, reference_urls)
+    cover_characters = _cover_characters(characters)
+    reference_urls = _consistency_reference_urls(art_style_ref_url, cover_characters)
+    cover_prompt = _build_cover_prompt(title, book.get("theme") or "", cover_characters, reference_urls)
 
     job_id = str(uuid.uuid4())
     db.create_job(job_id)
