@@ -85,25 +85,32 @@ def _draw_page(c, image_path, story_text):
     cropped = _cover_fit(image_path)
     c.drawImage(ImageReader(cropped), 0, 0, width=PAGE_WIDTH, height=PAGE_HEIGHT)
 
-    c.saveState()
-    c.setFillColor(Color(0, 0, 0, alpha=0.52))
-    c.rect(0, 0, PAGE_WIDTH, BAND_HEIGHT, fill=1, stroke=0)
-    c.restoreState()
-
     # The band itself is decorative art and may bleed to the page edge like the illustration —
     # only the actual text glyphs are subject to KDP's margin rule, so the text is confined to
     # start no lower than TRIM_BOTTOM_PT + SAFE_MARGIN_PT above the page's bottom (bleed) edge.
     max_width = PAGE_WIDTH - 2 * MARGIN_X
     text_bottom = TRIM_BOTTOM_PT + SAFE_MARGIN_PT
-    text_top = BAND_HEIGHT - 0.15 * 72
-    max_height = text_top - text_bottom
+    top_padding = 0.15 * 72
+    max_height = (BAND_HEIGHT - top_padding) - text_bottom
     font_size, lines, leading = _fit_text(story_text or "", max_width, max_height)
+    block_height = len(lines) * leading
+
+    # _fit_text can't always fit the text even at MIN_FONT_SIZE (an unusually long final page,
+    # for example) — this got flagged by KDP as a margin violation, because the leftover
+    # centering math pushed the overflow below text_bottom instead of respecting it. Grow the
+    # band upward by exactly the overflow instead, so the bottom of the text block never moves.
+    band_height = BAND_HEIGHT + max(0, block_height - max_height)
+
+    c.saveState()
+    c.setFillColor(Color(0, 0, 0, alpha=0.52))
+    c.rect(0, 0, PAGE_WIDTH, band_height, fill=1, stroke=0)
+    c.restoreState()
 
     c.setFillColor(white)
     c.setFont(FONT_NAME, font_size)
 
-    block_height = len(lines) * leading
-    start_y = text_bottom + (max_height - block_height) / 2 + block_height - leading + (leading - font_size) / 2
+    available = band_height - top_padding - text_bottom
+    start_y = text_bottom + (available - block_height) / 2 + block_height - leading + (leading - font_size) / 2
 
     y = start_y
     for line in lines:
