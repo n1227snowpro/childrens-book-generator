@@ -472,15 +472,19 @@ function renderPageThumb(bookId, page) {
   const wrap = document.createElement("div");
   wrap.className = "page-thumb" + (page.is_placeholder ? " needs-fix" : "");
   const editPlaceholder = page.is_placeholder
-    ? "This page has no image yet — describe what to illustrate"
+    ? "Original prompt for this page — leave as-is to retry, or edit it first"
     : "Describe an edit to this image, e.g. \"make the sky orange\"";
+  // Placeholder pages have no image to edit, so regenerate falls back to a fresh generation
+  // from the stored scene prompt — pre-fill it so the user can see and optionally tweak what
+  // will actually be sent, instead of an empty box that looks like nothing will happen.
+  const prefill = page.is_placeholder ? (page.image_prompt || "") : "";
   wrap.innerHTML = `
     <img src="${page.s3_url}" alt="Page ${page.page_num}" />
     <div class="page-thumb-footer">
       <span>Page ${page.page_num}${page.is_placeholder ? " ⚠" : ""}</span>
       <button type="button" class="btn-secondary btn-small" data-action="regen">Regenerate</button>
     </div>
-    <textarea class="page-prompt-input hint" rows="2" placeholder="${escapeHtml(editPlaceholder)}"></textarea>
+    <textarea class="page-prompt-input hint" rows="2" placeholder="${escapeHtml(editPlaceholder)}">${escapeHtml(prefill)}</textarea>
     <p class="page-thumb-status hint"></p>
   `;
 
