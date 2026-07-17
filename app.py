@@ -203,21 +203,22 @@ def _page_characters(characters, page):
 def _build_cover_prompt(title, theme, characters, reference_urls):
     # The AI renders the title directly into the artwork (no code-drawn overlay — see
     # cover_builder.py), so keeping it inside KDP's safe area is prompt-guidance only, not
-    # something we can enforce after the fact. cover_builder's real geometry (WRAP_IN=0.591in
-    # bleed that gets trimmed off the top/right/bottom edges, plus ~0.375in further safety margin
-    # like the interior pages use) works out to roughly 8% of the full spread's width and 8% of
-    # its height as the bare technical minimum — these numbers add a buffer on top of that so a
-    # generation that slightly undershoots the instruction still lands safely inside the trim line.
+    # something we can enforce after the fact. An earlier version of this prompt spelled out
+    # numeric margins ("leave at least 12% of the image height..."), which backfired badly: the
+    # model rendered those percentages as literal on-image labels with tick-mark rulers, like a
+    # design annotation. Kept the guidance purely qualitative instead, plus an explicit
+    # instruction against adding any diagram-style text/labels/marks.
     prompt = (
         f"Wraparound children's book cover illustration for '{title}'. "
         f"Render the title text \"{title}\" prominently and legibly as part of the illustration, "
         "placed on the front-facing right-hand panel of the spread, well clear of the spine fold "
         "in the middle. The full image gets trimmed along its outer edges and wrapped around the "
-        "book during printing, so nothing important — especially any text — can sit near an edge: "
-        "leave at least 12% of the image's total height as empty space above the title, and at "
-        "least 10% of the image's total width as empty space to the right of the title and between "
-        "the title and the spine fold in the middle. No letter should touch or extend past the "
-        "top, right, or bottom edge of the image. Theme: " + theme + "."
+        "book during printing, so keep the title comfortably inset from every edge — surround it "
+        "with a wide, generous band of open background above, to the right of, and below it. Do "
+        "not let any letter come close to the top edge, right edge, or bottom edge of the image. "
+        "Do not add any extra text, labels, numbers, captions, rulers, or measurement marks "
+        "anywhere in the image — the only text should be the title itself, rendered as part of "
+        "the illustration. Theme: " + theme + "."
     )
     names = _character_names_joined(characters)
     if names:
@@ -469,9 +470,7 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
                 _download(cover_image_url, cover_image_path)
 
                 cover_pdf_path = final_dir / f"{slug}-cover.pdf"
-                cover_builder.build_cover_pdf(
-                    str(cover_image_path), title, params["page_count"], cover_pdf_path
-                )
+                cover_builder.build_cover_pdf(str(cover_image_path), params["page_count"], cover_pdf_path)
                 cover_key = f"books/{book_id}/final/{slug}-cover.pdf"
                 r2_client.upload_file(str(cover_pdf_path), cover_key)
             except Exception:
@@ -727,7 +726,7 @@ def _regenerate_cover_job(job_id, book_id, image_model, cover_prompt, reference_
         _push(job_id, {"step": "Building cover PDF", "pct": 75})
         slug = _slugify(title)
         cover_pdf_path = final_dir / f"{slug}-cover.pdf"
-        cover_builder.build_cover_pdf(str(cover_image_path), title, page_count, cover_pdf_path)
+        cover_builder.build_cover_pdf(str(cover_image_path), page_count, cover_pdf_path)
 
         _push(job_id, {"step": "Uploading cover", "pct": 90})
         cover_key = f"books/{book_id}/final/{slug}-cover.pdf"
