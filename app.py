@@ -763,6 +763,39 @@ def edit_book(book_id):
     return jsonify(_serialize_book(db.get_book(book_id)))
 
 
+def _story_outline(book):
+    """The saved blueprint's page-by-page story_text IS the book's story outline — already
+    persisted at generation time (blueprint_json), nothing new to store. Used as grounding
+    context for title suggestions so they reflect what the story actually contains rather than
+    just the pre-generation theme/prompt."""
+    blueprint = json.loads(book["blueprint_json"]) if book.get("blueprint_json") else {}
+    pages = blueprint.get("pages", [])
+    lines = [f"Page {p.get('page_num')}: {p['story_text']}" for p in pages if p.get("story_text")]
+    return "\n".join(lines)
+
+
+@app.route("/api/books/<book_id>/title-ideas", methods=["POST"])
+def book_title_ideas(book_id):
+    book = db.get_book(book_id)
+    if not book:
+        return jsonify({"error": "not found"}), 404
+    if not book.get("blueprint_json"):
+        return jsonify({"error": "No saved story data for this book"}), 400
+
+    story_outline = _story_outline(book)
+    if not story_outline:
+        return jsonify({"error": "This book has no story text saved yet"}), 400
+
+    try:
+        titles = gemini_client.generate_title_ideas(
+            story_outline, book.get("theme") or "", book["title"], book.get("target_age") or "4-8"
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+    return jsonify({"titles": titles})
+
+
 @app.route("/api/books/<book_id>/download")
 def download_book(book_id):
     book = db.get_book(book_id)

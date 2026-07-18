@@ -274,7 +274,32 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .title-edit-form { display: flex; flex-direction: column; gap: 6px; max-width: 420px; }
 .title-edit-form input { font-size: 0.95rem; padding: 6px 10px; }
-.title-edit-actions { display: flex; gap: 8px; }
+.title-edit-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.title-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.title-suggestion {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.title-suggestion:hover { border-color: var(--accent); }
+.title-suggestion .hint { margin: 0; }
 
 .status-badge {
   font-size: 0.7rem;

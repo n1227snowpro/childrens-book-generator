@@ -330,7 +330,9 @@ function renderHistoryCard(book) {
           <div class="title-edit-actions">
             <button type="button" class="btn-primary btn-small" data-action="save-title">Save</button>
             <button type="button" class="btn-secondary btn-small" data-action="cancel-title">Cancel</button>
+            <button type="button" class="btn-secondary btn-small" data-action="suggest-titles">✨ Suggest Titles</button>
           </div>
+          <div class="title-suggestions hidden"></div>
         </div>
       </div>
       <div class="history-card-header-right">
@@ -373,6 +375,8 @@ function renderHistoryCard(book) {
     subtitleDisplay.classList.toggle("hidden", !subtitleDisplay.textContent);
     editTitleBtn.classList.remove("hidden");
     titleEditStatus.classList.add("hidden", "error");
+    card.querySelector(".title-suggestions").classList.add("hidden");
+    card.querySelector(".title-suggestions").innerHTML = "";
   };
 
   editTitleBtn.addEventListener("click", () => {
@@ -415,6 +419,44 @@ function renderHistoryCard(book) {
         titleEditStatus.textContent = err.message;
         titleEditStatus.classList.remove("hidden");
         titleEditStatus.classList.add("error");
+      });
+  });
+
+  const suggestTitlesBtn = card.querySelector('[data-action="suggest-titles"]');
+  const titleSuggestions = card.querySelector(".title-suggestions");
+  suggestTitlesBtn.addEventListener("click", () => {
+    suggestTitlesBtn.disabled = true;
+    titleEditStatus.classList.remove("hidden", "error");
+    titleEditStatus.textContent = "Reading the story and brainstorming titles…";
+    titleSuggestions.classList.add("hidden");
+    titleSuggestions.innerHTML = "";
+
+    fetch(`/api/books/${book.book_id}/title-ideas`, { method: "POST" })
+      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) throw new Error(data.error || "Failed to get title ideas");
+        if (!data.titles || !data.titles.length) throw new Error("No title ideas came back — try again.");
+
+        titleEditStatus.textContent = "Pick one, or keep editing above:";
+        titleSuggestions.classList.remove("hidden");
+        for (const idea of data.titles) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "title-suggestion";
+          btn.innerHTML = `<strong>${escapeHtml(idea.title)}</strong><span class="hint">${escapeHtml(idea.subtitle || "")}</span>`;
+          btn.addEventListener("click", () => {
+            titleInput.value = idea.title;
+            subtitleInput.value = idea.subtitle || "";
+          });
+          titleSuggestions.appendChild(btn);
+        }
+      })
+      .catch((err) => {
+        titleEditStatus.textContent = err.message;
+        titleEditStatus.classList.add("error");
+      })
+      .finally(() => {
+        suggestTitlesBtn.disabled = false;
       });
   });
 
