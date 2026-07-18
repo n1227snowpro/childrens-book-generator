@@ -223,9 +223,15 @@ def _build_cover_prompt(title, subtitle, theme, characters, reference_urls):
     # backfired differently: the model rendered a literal 3D book mockup — a shaded/darkened
     # crease down the center simulating a physical spine, and blank empty margins (instead of
     # continued artwork) around the title. This version is explicit that the output is a flat,
-    # full-bleed print file with no mockup shading and no blank space anywhere.
+    # full-bleed print file with no mockup shading and no blank space anywhere. A further issue
+    # showed up once title+subtitle both appeared: the model spread them apart, putting the
+    # subtitle by itself near the very bottom of the panel where it got clipped by KDP's trim/
+    # safe-area guides. Now explicit that title+subtitle must sit together as one tight block,
+    # clear of the bottom edge specifically.
     subtitle_clause = (
-        f" Below the title, in smaller text, render the subtitle \"{subtitle}\"."
+        f" Directly beneath the title, in smaller text, render the subtitle \"{subtitle}\" — "
+        "as part of the same tight text block as the title, not placed separately elsewhere "
+        "in the image."
         if subtitle
         else ""
     )
@@ -239,7 +245,11 @@ def _build_cover_prompt(title, subtitle, theme, characters, reference_urls):
         "image must be evenly lit and visually continuous from edge to edge, with no seam, fold, "
         "or darkened strip down the center. "
         f"Render the title text \"{title}\" prominently and legibly as part of the illustration, "
-        f"placed within the right half (front cover) of the image.{subtitle_clause} "
+        f"placed within the upper half of the right half (front cover) of the image.{subtitle_clause} "
+        "This title+subtitle block must stay entirely within the upper half of the front cover "
+        "panel and must be nowhere near the bottom edge — leave the whole lower portion of the "
+        "front cover free of any text, since it is the area most likely to be trimmed or hidden "
+        "by cover-tool safe-area guides. "
         "The illustration must fill the entire canvas edge-to-edge with continuous scenery and "
         "artwork — no blank, empty, or solid-color margins anywhere, including at the top, "
         "bottom, or sides. Keep the title/subtitle text legible by placing it over open sky, "
