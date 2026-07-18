@@ -219,23 +219,34 @@ def _build_cover_prompt(title, subtitle, theme, characters, reference_urls):
     # something we can enforce after the fact. An earlier version of this prompt spelled out
     # numeric margins ("leave at least 12% of the image height..."), which backfired badly: the
     # model rendered those percentages as literal on-image labels with tick-mark rulers, like a
-    # design annotation. Kept the guidance purely qualitative instead, plus an explicit
-    # instruction against adding any diagram-style text/labels/marks.
+    # design annotation. A later version said "spine fold" and "band of open background", which
+    # backfired differently: the model rendered a literal 3D book mockup — a shaded/darkened
+    # crease down the center simulating a physical spine, and blank empty margins (instead of
+    # continued artwork) around the title. This version is explicit that the output is a flat,
+    # full-bleed print file with no mockup shading and no blank space anywhere.
     subtitle_clause = (
         f" Below the title, in smaller text, render the subtitle \"{subtitle}\"."
         if subtitle
         else ""
     )
     prompt = (
-        f"Wraparound children's book cover illustration for '{title}'. "
+        f"Full-bleed, perfectly flat two-dimensional wraparound illustration for a children's "
+        f"book cover titled '{title}' — one single continuous painted scene spanning the back "
+        "cover (left half) and front cover (right half), the kind of flat print-ready artwork "
+        "file an illustrator delivers to a printer. This is NOT a 3D product photo or book "
+        "mockup: do not render any shadow, crease, gutter darkening, drop shadow, page curl, "
+        "spine fold line, or any other effect suggesting a physical three-dimensional book — the "
+        "image must be evenly lit and visually continuous from edge to edge, with no seam, fold, "
+        "or darkened strip down the center. "
         f"Render the title text \"{title}\" prominently and legibly as part of the illustration, "
-        "placed on the front-facing right-hand panel of the spread, well clear of the spine fold "
-        f"in the middle.{subtitle_clause} The full image gets trimmed along its outer edges and "
-        "wrapped around the book during printing, so keep all of this text comfortably inset from "
-        "every edge — surround it with a wide, generous band of open background above, to the "
-        "right of, and below it. Do not let any letter come close to the top edge, right edge, or "
-        "bottom edge of the image. Do not add any extra text, labels, numbers, captions, rulers, "
-        "or measurement marks anywhere in the image — the only text should be the title" +
+        f"placed within the right half (front cover) of the image.{subtitle_clause} "
+        "The illustration must fill the entire canvas edge-to-edge with continuous scenery and "
+        "artwork — no blank, empty, or solid-color margins anywhere, including at the top, "
+        "bottom, or sides. Keep the title/subtitle text legible by placing it over open sky, "
+        "foliage, or other background elements within the scene itself, comfortably away from "
+        "the exact center and from all four edges — not by leaving empty space around it. "
+        "Do not add any extra text, labels, numbers, captions, rulers, or measurement marks "
+        "anywhere in the image — the only text should be the title" +
         (" and subtitle" if subtitle else "") +
         " described above, rendered as part of the illustration. Theme: " + theme + "."
     )
