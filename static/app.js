@@ -320,8 +320,23 @@ function renderHistoryCard(book) {
   const created = book.created_at ? new Date(book.created_at).toLocaleString() : "";
   card.innerHTML = `
     <div class="history-card-header">
-      <h3>${escapeHtml(book.title)}</h3>
-      <span class="status-badge status-${escapeHtml(book.status)}">${escapeHtml(book.status)}</span>
+      <div class="history-card-title">
+        <h3 class="title-display">${escapeHtml(book.title)}</h3>
+        <p class="hint subtitle-display ${book.subtitle ? "" : "hidden"}">${escapeHtml(book.subtitle || "")}</p>
+        <div class="title-edit-form hidden">
+          <input type="text" class="title-input" value="${escapeHtml(book.title)}" placeholder="Title" />
+          <input type="text" class="subtitle-input" value="${escapeHtml(book.subtitle || "")}" placeholder="Subtitle (optional)" />
+          <p class="hint title-edit-status hidden"></p>
+          <div class="title-edit-actions">
+            <button type="button" class="btn-primary btn-small" data-action="save-title">Save</button>
+            <button type="button" class="btn-secondary btn-small" data-action="cancel-title">Cancel</button>
+          </div>
+        </div>
+      </div>
+      <div class="history-card-header-right">
+        <button type="button" class="btn-secondary btn-small" data-action="edit-title">Edit Title</button>
+        <span class="status-badge status-${escapeHtml(book.status)}">${escapeHtml(book.status)}</span>
+      </div>
     </div>
     <p class="hint">${book.page_count} pages · ${escapeHtml(book.image_model || "")} · ${escapeHtml(created)}</p>
     <div class="result-actions">
@@ -343,6 +358,65 @@ function renderHistoryCard(book) {
   if (book.status === "running") {
     watchRunningBook(book.book_id, card.querySelector(".generation-status"));
   }
+
+  const titleDisplay = card.querySelector(".title-display");
+  const subtitleDisplay = card.querySelector(".subtitle-display");
+  const titleEditForm = card.querySelector(".title-edit-form");
+  const titleInput = card.querySelector(".title-input");
+  const subtitleInput = card.querySelector(".subtitle-input");
+  const titleEditStatus = card.querySelector(".title-edit-status");
+  const editTitleBtn = card.querySelector('[data-action="edit-title"]');
+
+  const closeTitleEdit = () => {
+    titleEditForm.classList.add("hidden");
+    titleDisplay.classList.remove("hidden");
+    subtitleDisplay.classList.toggle("hidden", !subtitleDisplay.textContent);
+    editTitleBtn.classList.remove("hidden");
+    titleEditStatus.classList.add("hidden", "error");
+  };
+
+  editTitleBtn.addEventListener("click", () => {
+    titleInput.value = book.title;
+    subtitleInput.value = book.subtitle || "";
+    titleDisplay.classList.add("hidden");
+    subtitleDisplay.classList.add("hidden");
+    editTitleBtn.classList.add("hidden");
+    titleEditForm.classList.remove("hidden");
+    titleInput.focus();
+  });
+
+  card.querySelector('[data-action="cancel-title"]').addEventListener("click", closeTitleEdit);
+
+  card.querySelector('[data-action="save-title"]').addEventListener("click", () => {
+    const newTitle = titleInput.value.trim();
+    if (!newTitle) {
+      titleEditStatus.textContent = "Title can't be empty.";
+      titleEditStatus.classList.remove("hidden");
+      titleEditStatus.classList.add("error");
+      return;
+    }
+    const newSubtitle = subtitleInput.value.trim();
+
+    fetch(`/api/books/${book.book_id}/edit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: newTitle, subtitle: newSubtitle }),
+    })
+      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) throw new Error(data.error || "Failed to save");
+        book.title = data.title;
+        book.subtitle = data.subtitle;
+        titleDisplay.textContent = book.title;
+        subtitleDisplay.textContent = book.subtitle || "";
+        closeTitleEdit();
+      })
+      .catch((err) => {
+        titleEditStatus.textContent = err.message;
+        titleEditStatus.classList.remove("hidden");
+        titleEditStatus.classList.add("error");
+      });
+  });
 
   const regenCoverBtn = card.querySelector('[data-action="regen-cover"]');
   if (regenCoverBtn) {

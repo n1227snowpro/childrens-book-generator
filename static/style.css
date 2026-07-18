@@ -255,13 +255,26 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .history-card-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 6px;
 }
 
-.history-card-header h3 { font-size: 1.05rem; }
+.history-card-title { flex: 1; min-width: 0; }
+.history-card-title h3 { font-size: 1.05rem; }
+.history-card-title .subtitle-display { margin-top: 2px; }
+
+.history-card-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.title-edit-form { display: flex; flex-direction: column; gap: 6px; max-width: 420px; }
+.title-edit-form input { font-size: 0.95rem; padding: 6px 10px; }
+.title-edit-actions { display: flex; gap: 8px; }
 
 .status-badge {
   font-size: 0.7rem;

@@ -213,7 +213,7 @@ def _cover_characters(characters):
     return characters[:COVER_MAX_CHARACTERS]
 
 
-def _build_cover_prompt(title, theme, characters, reference_urls):
+def _build_cover_prompt(title, subtitle, theme, characters, reference_urls):
     # The AI renders the title directly into the artwork (no code-drawn overlay — see
     # cover_builder.py), so keeping it inside KDP's safe area is prompt-guidance only, not
     # something we can enforce after the fact. An earlier version of this prompt spelled out
@@ -221,17 +221,23 @@ def _build_cover_prompt(title, theme, characters, reference_urls):
     # model rendered those percentages as literal on-image labels with tick-mark rulers, like a
     # design annotation. Kept the guidance purely qualitative instead, plus an explicit
     # instruction against adding any diagram-style text/labels/marks.
+    subtitle_clause = (
+        f" Below the title, in smaller text, render the subtitle \"{subtitle}\"."
+        if subtitle
+        else ""
+    )
     prompt = (
         f"Wraparound children's book cover illustration for '{title}'. "
         f"Render the title text \"{title}\" prominently and legibly as part of the illustration, "
         "placed on the front-facing right-hand panel of the spread, well clear of the spine fold "
-        "in the middle. The full image gets trimmed along its outer edges and wrapped around the "
-        "book during printing, so keep the title comfortably inset from every edge — surround it "
-        "with a wide, generous band of open background above, to the right of, and below it. Do "
-        "not let any letter come close to the top edge, right edge, or bottom edge of the image. "
-        "Do not add any extra text, labels, numbers, captions, rulers, or measurement marks "
-        "anywhere in the image — the only text should be the title itself, rendered as part of "
-        "the illustration. Theme: " + theme + "."
+        f"in the middle.{subtitle_clause} The full image gets trimmed along its outer edges and "
+        "wrapped around the book during printing, so keep all of this text comfortably inset from "
+        "every edge — surround it with a wide, generous band of open background above, to the "
+        "right of, and below it. Do not let any letter come close to the top edge, right edge, or "
+        "bottom edge of the image. Do not add any extra text, labels, numbers, captions, rulers, "
+        "or measurement marks anywhere in the image — the only text should be the title" +
+        (" and subtitle" if subtitle else "") +
+        " described above, rendered as part of the illustration. Theme: " + theme + "."
     )
     names = _character_names_joined(characters)
     if names:
@@ -283,6 +289,9 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
                 art_style_preference=params["art_style_preference"],
                 blueprint_json=json.dumps(blueprint),
             )
+            # Seeded from Claude's tagline as a starting point — editable afterward from History,
+            # and Regenerate Cover always uses whatever is currently saved on the book.
+            db.update_book(book_id, subtitle=blueprint.get("tagline", ""))
 
         book_dir = BOOKS_DIR / book_id
         pages_dir = book_dir / "pages"
@@ -477,7 +486,13 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
         cover_key = existing_book.get("cover_key") if resume_book_id else None
         if not cover_key:
             try:
-                cover_prompt = _build_cover_prompt(title, params["theme"], cover_characters, cover_reference_urls)
+                # Re-fetch rather than trust a locally-held title/tagline: covers the resume path
+                # (subtitle may have been edited from History since the original run) and the
+                # fresh-generation path (subtitle was just seeded from blueprint's tagline above).
+                current_subtitle = (db.get_book(book_id) or {}).get("subtitle") or ""
+                cover_prompt = _build_cover_prompt(
+                    title, current_subtitle, params["theme"], cover_characters, cover_reference_urls
+                )
                 cover_image_url = kie_client.generate_cover_image(
                     image_model, cover_prompt, reference_image_urls=cover_reference_urls
                 )
@@ -726,6 +741,28 @@ def get_book(book_id):
     return jsonify(_serialize_book(book))
 
 
+@app.route("/api/books/<book_id>/edit", methods=["POST"])
+def edit_book(book_id):
+    book = db.get_book(book_id)
+    if not book:
+        return jsonify({"error": "not found"}), 404
+
+    data = request.get_json(force=True, silent=True) or {}
+    fields = {}
+    if "title" in data:
+        title = (data.get("title") or "").strip()
+        if not title:
+            return jsonify({"error": "Title cannot be empty"}), 400
+        fields["title"] = title
+    if "subtitle" in data:
+        fields["subtitle"] = (data.get("subtitle") or "").strip()
+
+    if fields:
+        db.update_book(book_id, **fields)
+
+    return jsonify(_serialize_book(db.get_book(book_id)))
+
+
 @app.route("/api/books/<book_id>/download")
 def download_book(book_id):
     book = db.get_book(book_id)
@@ -785,11 +822,15 @@ def regenerate_cover(book_id):
         return jsonify({"error": "No saved story data for this book"}), 400
 
     image_model = book.get("image_model") or kie_client.DEFAULT_MODEL
-    characters, _art_style, title = _load_characters_with_refs(book)
+    # Use the book's own title/subtitle (editable from History), not the blueprint's frozen
+    # copy — this is what lets an edited title/subtitle actually take effect on regeneration.
+    title = book["title"]
+    subtitle = book.get("subtitle") or ""
+    characters, _art_style, _blueprint_title = _load_characters_with_refs(book)
     art_style_ref_url = r2_client.presigned_url(book["art_style_ref_key"]) if book.get("art_style_ref_key") else None
     cover_characters = _cover_characters(characters)
     reference_urls = _consistency_reference_urls(art_style_ref_url, cover_characters)
-    cover_prompt = _build_cover_prompt(title, book.get("theme") or "", cover_characters, reference_urls)
+    cover_prompt = _build_cover_prompt(title, subtitle, book.get("theme") or "", cover_characters, reference_urls)
 
     job_id = str(uuid.uuid4())
     db.create_job(job_id)
