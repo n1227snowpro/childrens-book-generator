@@ -642,6 +642,25 @@ def job_status(job_id):
     return jsonify(result)
 
 
+@app.route("/api/books/<book_id>/job")
+def book_job(book_id):
+    """Lets a fresh page load (browser reopened after being closed mid-generation) find and
+    reconnect to whatever job is/was running for this book — generation itself runs as a
+    detached background thread and was never tied to any one browser connection, this just gives
+    the UI a way to find it again without the original job_id."""
+    job = db.get_latest_job_for_book(book_id)
+    if not job:
+        return jsonify({"error": "not found"}), 404
+    return jsonify({
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "step": job["step"],
+        "current": job["current"],
+        "total": job["total"],
+        "error": job.get("error"),
+    })
+
+
 @app.route("/api/books/stream/<job_id>")
 def job_stream(job_id):
     def generate():

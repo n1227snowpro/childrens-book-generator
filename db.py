@@ -167,6 +167,14 @@ def get_job(job_id):
         return dict(row) if row else None
 
 
+def get_latest_job_for_book(book_id):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM jobs WHERE book_id = ? ORDER BY created_at DESC LIMIT 1", (book_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def create_book(
     book_id, title, page_count, status="running", image_model=None,
     target_age=None, theme=None, content_instruction=None, main_characters=None,

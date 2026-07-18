@@ -266,6 +266,53 @@ async function loadHistory() {
   }
 }
 
+// Generation always runs as a background job on the server, independent of any browser
+// connection — closing the tab or the whole browser does not stop it. This just lets a fresh
+// page load (History tab, possibly reopened much later) find whatever job is/was running for a
+// book still marked "running" and reconnect to its live progress, without needing the original
+// in-memory job_id from the tab that started it.
+function watchRunningBook(bookId, statusEl) {
+  statusEl.textContent = "Checking status…";
+  fetch(`/api/books/${bookId}/job`)
+    .then((res) => res.json())
+    .then((job) => {
+      if (job.error && !job.job_id) {
+        statusEl.textContent = "";
+        statusEl.classList.add("hidden");
+        return;
+      }
+      if (job.status === "done" || job.status === "error") {
+        loadHistory();
+        return;
+      }
+      statusEl.textContent = job.step ? `Generating… ${job.step}` : "Generating…";
+
+      const source = new EventSource(`/api/books/stream/${job.job_id}`);
+      source.onmessage = (event) => {
+        const evt = JSON.parse(event.data);
+        if (evt.error) {
+          statusEl.textContent = evt.error;
+          statusEl.classList.add("error");
+          source.close();
+          return;
+        }
+        if (evt.step) {
+          statusEl.textContent =
+            typeof evt.pct === "number" ? `Generating… ${evt.step} (${evt.pct}%)` : `Generating… ${evt.step}`;
+        }
+        if (evt.done) {
+          source.close();
+          loadHistory();
+        }
+      };
+      source.onerror = () => source.close();
+    })
+    .catch(() => {
+      statusEl.textContent = "";
+      statusEl.classList.add("hidden");
+    });
+}
+
 function renderHistoryCard(book) {
   const card = document.createElement("div");
   card.className = "history-card";
@@ -288,9 +335,14 @@ function renderHistoryCard(book) {
     </div>
     <p class="hint continue-status hidden"></p>
     <p class="hint rebuild-status hidden"></p>
+    <p class="hint generation-status ${book.status === "running" ? "" : "hidden"}"></p>
     ${book.pdf_url ? `<p class="hint">Regenerating page images below updates the images only — click "Rebuild PDF" once you're happy with them to fold the changes into the PDF.</p>` : ""}
     <div class="history-pages hidden"></div>
   `;
+
+  if (book.status === "running") {
+    watchRunningBook(book.book_id, card.querySelector(".generation-status"));
+  }
 
   const regenCoverBtn = card.querySelector('[data-action="regen-cover"]');
   if (regenCoverBtn) {
