@@ -336,6 +336,7 @@ function renderHistoryCard(book) {
         </div>
       </div>
       <div class="history-card-header-right">
+        <button type="button" class="btn-secondary btn-small" data-action="copy-title">📋 Copy</button>
         <button type="button" class="btn-secondary btn-small" data-action="edit-title">Edit Title</button>
         <span class="status-badge status-${escapeHtml(book.status)}">${escapeHtml(book.status)}</span>
       </div>
@@ -348,6 +349,7 @@ function renderHistoryCard(book) {
       ${book.can_regenerate_cover ? `<button type="button" class="btn-secondary" data-action="regen-cover">Regenerate Cover</button>` : ""}
       ${book.pdf_url ? `<button type="button" class="btn-secondary" data-action="rebuild-pdf">Rebuild PDF</button>` : ""}
       <button type="button" class="btn-secondary" data-action="toggle-pages">View Pages</button>
+      ${book.blueprint_available ? `<button type="button" class="btn-secondary" data-action="toggle-description">Amazon Description</button>` : ""}
       <button type="button" class="btn-secondary" data-action="delete">Delete</button>
     </div>
     <p class="hint continue-status hidden"></p>
@@ -355,6 +357,15 @@ function renderHistoryCard(book) {
     <p class="hint generation-status ${book.status === "running" ? "" : "hidden"}"></p>
     ${book.pdf_url ? `<p class="hint">Regenerating page images below updates the images only — click "Rebuild PDF" once you're happy with them to fold the changes into the PDF.</p>` : ""}
     <div class="history-pages hidden"></div>
+    <div class="history-description hidden">
+      <textarea class="description-input" rows="8" placeholder="No Amazon description yet — click Generate to have Gemini write one from this book's story.">${escapeHtml(book.amazon_description || "")}</textarea>
+      <p class="hint description-status hidden"></p>
+      <div class="description-actions">
+        <button type="button" class="btn-secondary btn-small" data-action="generate-description">✨ ${book.amazon_description ? "Regenerate" : "Generate"}</button>
+        <button type="button" class="btn-primary btn-small" data-action="save-description">Save</button>
+        <button type="button" class="btn-secondary btn-small" data-action="copy-description">📋 Copy</button>
+      </div>
+    </div>
   `;
 
   if (book.status === "running") {
@@ -620,6 +631,79 @@ function renderHistoryCard(book) {
     } catch (err) {
       pagesEl.textContent = `Could not load pages: ${err.message}`;
     }
+  });
+
+  const descriptionEl = card.querySelector(".history-description");
+  const toggleDescriptionBtn = card.querySelector('[data-action="toggle-description"]');
+  if (toggleDescriptionBtn) {
+    const descriptionInput = descriptionEl.querySelector(".description-input");
+    const descriptionStatus = descriptionEl.querySelector(".description-status");
+    const generateDescriptionBtn = descriptionEl.querySelector('[data-action="generate-description"]');
+    const saveDescriptionBtn = descriptionEl.querySelector('[data-action="save-description"]');
+    const copyDescriptionBtn = descriptionEl.querySelector('[data-action="copy-description"]');
+
+    const showDescriptionStatus = (message, isError) => {
+      descriptionStatus.textContent = message;
+      descriptionStatus.classList.remove("hidden");
+      descriptionStatus.classList.toggle("error", !!isError);
+    };
+
+    toggleDescriptionBtn.addEventListener("click", () => {
+      descriptionEl.classList.toggle("hidden");
+    });
+
+    generateDescriptionBtn.addEventListener("click", () => {
+      generateDescriptionBtn.disabled = true;
+      showDescriptionStatus("Generating description…", false);
+      fetch(`/api/books/${book.book_id}/amazon-description`, { method: "POST" })
+        .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+        .then(({ ok, data }) => {
+          if (!ok) throw new Error(data.error || "Failed to generate description");
+          book.amazon_description = data.amazon_description;
+          descriptionInput.value = data.amazon_description;
+          generateDescriptionBtn.textContent = "✨ Regenerate";
+          showDescriptionStatus("Generated.", false);
+        })
+        .catch((err) => showDescriptionStatus(err.message, true))
+        .finally(() => {
+          generateDescriptionBtn.disabled = false;
+        });
+    });
+
+    saveDescriptionBtn.addEventListener("click", () => {
+      saveDescriptionBtn.disabled = true;
+      fetch(`/api/books/${book.book_id}/edit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amazon_description: descriptionInput.value }),
+      })
+        .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+        .then(({ ok, data }) => {
+          if (!ok) throw new Error(data.error || "Failed to save");
+          book.amazon_description = data.amazon_description;
+          showDescriptionStatus("Saved.", false);
+        })
+        .catch((err) => showDescriptionStatus(err.message, true))
+        .finally(() => {
+          saveDescriptionBtn.disabled = false;
+        });
+    });
+
+    copyDescriptionBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(descriptionInput.value).then(() => {
+        showDescriptionStatus("Copied to clipboard.", false);
+      }).catch(() => showDescriptionStatus("Could not copy — select and copy manually.", true));
+    });
+  }
+
+  card.querySelector('[data-action="copy-title"]').addEventListener("click", () => {
+    const text = book.subtitle ? `${book.title}\n${book.subtitle}` : book.title;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = card.querySelector('[data-action="copy-title"]');
+      const original = btn.textContent;
+      btn.textContent = "Copied!";
+      setTimeout(() => { btn.textContent = original; }, 1500);
+    }).catch(() => alert("Could not copy — select and copy manually."));
   });
 
   card.querySelector('[data-action="delete"]').addEventListener("click", async () => {

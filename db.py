@@ -82,7 +82,8 @@ def init_db():
         except sqlite3.OperationalError:
             pass
         for _col in ("target_age", "theme", "content_instruction", "main_characters",
-                     "art_style_preference", "blueprint_json", "art_style_ref_key", "subtitle"):
+                     "art_style_preference", "blueprint_json", "art_style_ref_key", "subtitle",
+                     "amazon_description"):
             try:
                 conn.execute(f"ALTER TABLE books ADD COLUMN {_col} TEXT")
             except sqlite3.OperationalError:

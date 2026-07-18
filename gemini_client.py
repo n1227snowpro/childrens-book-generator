@@ -113,6 +113,76 @@ def generate_title_ideas(story_outline, theme, current_title, target_age="4-8", 
     return json.loads(parts[0]["text"]).get("titles", [])
 
 
+AMAZON_DESCRIPTION_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "description": {"type": "STRING"},
+    },
+    "required": ["description"],
+}
+
+
+def _build_amazon_description_prompt(story_outline, theme, title, subtitle, target_age):
+    subtitle_line = f"\nSubtitle: {subtitle}" if subtitle else ""
+    return f"""You are writing an Amazon book listing description for a children's picture book, \
+in the style of compelling back-cover copy that helps parents and gift-buyers decide to purchase it.
+
+Title: {title}{subtitle_line}
+Target age: {target_age}
+Theme: {theme}
+
+Full story, page by page:
+{story_outline}
+
+Write a warm, engaging Amazon product description (3-5 short paragraphs) that:
+- Hooks the reader in the first line
+- Summarizes the story's premise and emotional journey WITHOUT spoiling the ending
+- Highlights the book's theme or lesson and who it's perfect for (age range, occasions like \
+bedtime or gifts)
+- Ends with a warm call-to-action inviting the reader to buy the book
+- Uses plain text only — no markdown, no headers, no bullet points, just natural paragraphs \
+separated by blank lines, ready to paste directly into Amazon's description field
+
+Return ONLY a JSON object with a single "description" field containing the full text."""
+
+
+def generate_amazon_description(story_outline, theme, title, subtitle, target_age="4-8"):
+    api_key = settings.get("GEMINI_API_KEY")
+    payload = {
+        "contents": [{
+            "role": "user",
+            "parts": [{"text": _build_amazon_description_prompt(story_outline, theme, title, subtitle, target_age)}],
+        }],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": AMAZON_DESCRIPTION_SCHEMA,
+            "temperature": 0.85,
+        },
+    }
+    resp = requests.post(
+        f"{BASE_URL}/models/{MODEL}:generateContent",
+        params={"key": api_key},
+        json=payload,
+        timeout=60,
+    )
+    if not resp.ok:
+        try:
+            message = resp.json().get("error", {}).get("message", resp.text)
+        except ValueError:
+            message = resp.text
+        raise RuntimeError(f"Gemini API error ({resp.status_code}): {message}")
+    body = resp.json()
+
+    candidates = body.get("candidates") or []
+    if not candidates:
+        raise RuntimeError(f"Gemini returned no candidates: {body}")
+    parts = candidates[0].get("content", {}).get("parts") or []
+    if not parts:
+        raise RuntimeError(f"Gemini candidate had no content parts: {candidates[0]}")
+
+    return json.loads(parts[0]["text"]).get("description", "")
+
+
 def generate_book_fields(idea, target_age="4-8"):
     api_key = settings.get("GEMINI_API_KEY")
     payload = {

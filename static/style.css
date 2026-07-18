@@ -372,3 +372,21 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   padding: 0 10px 8px;
   margin: 0 !important;
 }
+
+.history-description {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.history-description .description-input {
+  margin-bottom: 10px;
+}
+
+.description-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.description-status.error { color: #c0392b; }
