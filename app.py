@@ -215,6 +215,21 @@ _PAGE_NO_TEXT_SUFFIX = (
     "not covered by that safety margin."
 )
 
+# Same always-on pattern as _PAGE_NO_TEXT_SUFFIX, for a different KDP interior rejection:
+# "insufficient bleed" on pages 1-3, 36, 38 of "Chief Iggy's Big Red Rescue". Confirmed by
+# rendering the actual generated pages that nothing in this app crops or composites a border —
+# the image model itself was painting a picture-frame-style rounded border with solid white
+# background outside it, going all the way to the image's own edges on multiple unrelated pages.
+# _cover_fit's scale-to-cover crop can't remove that: it's real painted content spanning the
+# full source image, not empty canvas, so cropping tighter would just cut into the scene instead
+# of the border. The only fix is stopping the model from painting a border/frame at all.
+_PAGE_FULL_BLEED_SUFFIX = (
+    " This illustration must be a full-bleed, edge-to-edge scene with continuous artwork filling "
+    "the entire canvas, corner to corner. Do not add a border, frame, rounded corners, vignette, "
+    "or any white/blank margin around the edges — nothing resembling a picture frame or postcard "
+    "border. The scene's content must extend all the way to every edge of the image."
+)
+
 
 def _character_names_joined(characters):
     return ", ".join(c.get("name", "") for c in characters if c.get("name"))
@@ -519,6 +534,7 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
                 prompt += f" Characters present: {names_joined}."
             prompt += _consistency_suffix(page_refs)
             prompt += _PAGE_NO_TEXT_SUFFIX
+            prompt += _PAGE_FULL_BLEED_SUFFIX
             page_prompts.append(prompt)
             page_reference_urls_per_page.append(page_refs)
         total_pages = len(page_prompts)
@@ -1210,6 +1226,8 @@ def regenerate_page(book_id, page_num):
             return jsonify({"error": "No prompt available for this page; provide one"}), 400
         if _PAGE_NO_TEXT_SUFFIX not in prompt:
             prompt += _PAGE_NO_TEXT_SUFFIX
+        if _PAGE_FULL_BLEED_SUFFIX not in prompt:
+            prompt += _PAGE_FULL_BLEED_SUFFIX
         characters, _art_style, _title, locations = _load_characters_with_refs(book)
         art_style_ref_url = r2_client.presigned_url(book["art_style_ref_key"]) if book.get("art_style_ref_key") else None
         characters_on_page = json.loads(page["characters_on_page"]) if page.get("characters_on_page") else None
