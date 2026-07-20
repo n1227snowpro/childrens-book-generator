@@ -238,6 +238,10 @@ def generate_character_reference(model_id, prompt, reference_image_urls=None):
     return generate_image(model_id, prompt, reference_image_urls=reference_image_urls, aspect_ratio="1:1")
 
 
+def generate_location_reference(model_id, prompt, reference_image_urls=None):
+    return generate_image(model_id, prompt, reference_image_urls=reference_image_urls, aspect_ratio="1:1")
+
+
 def generate_page_image(model_id, prompt, reference_image_urls=None):
     return generate_image(model_id, prompt, reference_image_urls=reference_image_urls, aspect_ratio="3:4")
 

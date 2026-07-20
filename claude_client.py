@@ -79,6 +79,16 @@ clothing, hair, etc). Never reuse one character entry to represent drastically d
 stage needs its own reference so the illustrations stay age-accurate instead of drifting toward one
 fixed appearance (e.g. accidentally giving an infant a beard).
 
+IMPORTANT — recurring locations/settings:
+Identify each distinct physical setting that the story returns to more than once (for example: a
+character's home, a specific beach, a classroom, a forest clearing). Whenever the story comes back
+to the same place, reuse the EXACT SAME location name and keep its visual_description consistent —
+this is what lets the illustrations of that place look like the same location every time instead of
+a new one being invented on each page. Give each such recurring location its own entry in the
+"locations" array. A one-off setting that appears on only a single page, or a page that's a close-up
+/abstract beat with no meaningful background, does not need a location entry — leave that page's
+"location" as null.
+
 Return a single raw JSON object with NO markdown formatting, NO code fences, and NO commentary before or after it. The JSON must have exactly this shape:
 
 {{
@@ -94,18 +104,26 @@ Return a single raw JSON object with NO markdown formatting, NO code fences, and
       "image_prompt": "string describing a clean reference portrait of this character at this specific age/stage"
     }}
   ],
+  "locations": [
+    {{
+      "name": "string — must be unique, reused exactly whenever the story returns to this same place",
+      "visual_description": "string — the setting's key visual details: terrain/layout, landmarks, colors, lighting",
+      "image_prompt": "string describing a clean establishing-shot reference image of this location/environment, with no characters present"
+    }}
+  ],
   "pages": [
     {{
       "page_num": 1,
       "story_text": "2-4 age-appropriate sentences for this page",
       "scene_description": "string",
       "image_prompt": "string describing exactly what should be illustrated on this page",
-      "characters_on_page": ["exact character name(s) from the characters array that appear in this page's illustration, or an empty array if none"]
+      "characters_on_page": ["exact character name(s) from the characters array that appear in this page's illustration, or an empty array if none"],
+      "location": "exact location name from the locations array that this page's scene is set in, or null if this page has no tracked recurring location"
     }}
   ]
 }}
 
-The "pages" array must contain exactly {page_count} entries, page_num from 1 to {page_count}, following the story arc above. Every "characters_on_page" entry must exactly match a "name" in the "characters" array — always reference the correct life-stage variant for that point in the story (e.g. use "Baby Jesus" on early pages and "Adult Jesus" on later pages, never mix them on the same page unless the scene genuinely shows both). Age-appropriate language for target age {target_age}. Output ONLY the JSON object."""
+The "pages" array must contain exactly {page_count} entries, page_num from 1 to {page_count}, following the story arc above. Every "characters_on_page" entry must exactly match a "name" in the "characters" array — always reference the correct life-stage variant for that point in the story (e.g. use "Baby Jesus" on early pages and "Adult Jesus" on later pages, never mix them on the same page unless the scene genuinely shows both). Every non-null "location" must exactly match a "name" in the "locations" array. Age-appropriate language for target age {target_age}. Output ONLY the JSON object."""
 
 
 MAX_TOKENS = 64000

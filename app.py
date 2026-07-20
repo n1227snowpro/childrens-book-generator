@@ -165,15 +165,37 @@ def _character_reference_urls(characters):
     return [r2_client.presigned_url(c["s3_key"]) for c in characters if c.get("s3_key")]
 
 
-def _consistency_reference_urls(art_style_ref_url, characters):
-    urls = [art_style_ref_url] + _character_reference_urls(characters)
+def _consistency_reference_urls(art_style_ref_url, characters, location_ref_url=None):
+    # Order matters: nano-banana (the default model) silently truncates to its first 3 reference
+    # images (see kie_client.NANO_BANANA_MAX_REFERENCE_IMAGES), so style and location — which
+    # anchor the whole page rather than one element of it — go first, ahead of individual
+    # character references.
+    urls = [art_style_ref_url, location_ref_url] + _character_reference_urls(characters)
     return [u for u in urls if u]
+
+
+def _page_location_ref_url(locations, page):
+    """Resolves the presigned reference image for the location a page is set in, if the blueprint
+    tracked a recurring location for this page and a reference was successfully generated for it.
+    Without this, every page's background was generated from a fresh text description alone, with
+    nothing anchoring it to what the same location looked like on an earlier page — confirmed live
+    as inconsistent backgrounds across pages meant to share one scene."""
+    location_name = (page.get("location") or "").strip().lower()
+    if not location_name:
+        return None
+    for loc in locations:
+        if (loc.get("name") or "").strip().lower() == location_name and loc.get("s3_key"):
+            return r2_client.presigned_url(loc["s3_key"])
+    return None
 
 
 def _consistency_suffix(reference_urls):
     if not reference_urls:
         return ""
-    return " Match the exact illustration style and character appearances shown in the reference images."
+    return (
+        " Match the exact illustration style, character appearances, and background/setting "
+        "shown in the reference images."
+    )
 
 
 def _character_names_joined(characters):
@@ -304,7 +326,12 @@ def _load_characters_with_refs(book):
         saved = db.get_character_by_name(c.get("name", ""))
         matches = saved and _same_character(saved.get("visual_description", ""), c.get("visual_description", ""))
         characters.append({**c, "s3_key": saved["s3_key"] if matches else None})
-    return characters, blueprint.get("art_style", ""), blueprint.get("book_title", book.get("title", ""))
+    # Unlike characters, locations aren't matched across the library by name — a background is
+    # scoped to the one book it belongs to, so its s3_key is baked directly into blueprint_json
+    # once generated (see the location-reference loop in _run_pipeline) rather than looked up
+    # from a separate table.
+    locations = blueprint.get("locations", [])
+    return characters, blueprint.get("art_style", ""), blueprint.get("book_title", book.get("title", "")), locations
 
 
 def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
@@ -351,9 +378,11 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
         pages_dir = book_dir / "pages"
         final_dir = book_dir / "final"
         char_refs_dir = book_dir / "character-refs"
+        location_refs_dir = book_dir / "location-refs"
         pages_dir.mkdir(parents=True, exist_ok=True)
         final_dir.mkdir(parents=True, exist_ok=True)
         char_refs_dir.mkdir(parents=True, exist_ok=True)
+        location_refs_dir.mkdir(parents=True, exist_ok=True)
 
         art_style = blueprint.get("art_style", "")
 
@@ -423,6 +452,37 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
 
             _set_progress(job_id, "characters", step_text, i + 1, len(characters))
 
+        # One reference image per recurring location (see claude_client's "locations" schema),
+        # so pages set in the same place have a visual anchor instead of each independently
+        # reinterpreting the text description — confirmed live as inconsistent backgrounds across
+        # pages meant to share one scene. Unlike characters, locations aren't matched across the
+        # whole library by name (a background belongs to this one book), so there's no DB table to
+        # check for a reusable reference — resuming an interrupted run instead relies on the
+        # s3_key already being baked into this book's own blueprint_json from the persist below.
+        locations = blueprint.get("locations", [])
+        _set_progress(job_id, "characters", "Generating location references", 0, max(len(locations), 1))
+        for i, loc in enumerate(locations):
+            name = loc.get("name") or f"Location {i + 1}"
+            if not loc.get("s3_key"):
+                try:
+                    loc_prompt = loc.get("image_prompt", "") + _consistency_suffix(
+                        [art_style_ref_url] if art_style_ref_url else []
+                    )
+                    kie_url = kie_client.generate_location_reference(
+                        image_model, loc_prompt,
+                        reference_image_urls=[art_style_ref_url] if art_style_ref_url else [],
+                    )
+                    local_path = location_refs_dir / f"loc-{i}.jpg"
+                    _download(kie_url, local_path)
+                    s3_key = f"books/{book_id}/location-refs/{_slugify(name)}.jpg"
+                    r2_client.upload_file(str(local_path), s3_key)
+                    loc["s3_key"] = s3_key
+                except Exception:
+                    loc["s3_key"] = None
+            _set_progress(job_id, "characters", f"Generating location reference {i + 1}/{len(locations)}", i + 1, len(locations))
+        if locations:
+            db.update_book(book_id, blueprint_json=json.dumps(blueprint))
+
         pages = blueprint["pages"]
         # Used for the cover (which isn't tied to one story moment) — capped to a few characters
         # so their references don't get diluted; see _cover_characters.
@@ -433,7 +493,8 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
         page_reference_urls_per_page = []
         for p in pages:
             page_chars = _page_characters(characters, p)
-            page_refs = _consistency_reference_urls(art_style_ref_url, page_chars)
+            location_ref_url = _page_location_ref_url(locations, p)
+            page_refs = _consistency_reference_urls(art_style_ref_url, page_chars, location_ref_url)
             names_joined = _character_names_joined(page_chars)
             prompt = p.get("image_prompt", "")
             if names_joined:
@@ -518,6 +579,7 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
                 s3_key=s3_key, story_text=page.get("story_text", ""),
                 image_prompt=page_prompts[idx], is_placeholder=is_placeholder,
                 characters_on_page=json.dumps(page.get("characters_on_page") or []),
+                location=page.get("location"),
             )
             if existing:
                 db.update_page(book_id, page_num, **page_fields)
@@ -943,7 +1005,7 @@ def regenerate_cover(book_id):
     # copy — this is what lets an edited title/subtitle actually take effect on regeneration.
     title = book["title"]
     subtitle = book.get("subtitle") or ""
-    characters, _art_style, _blueprint_title = _load_characters_with_refs(book)
+    characters, _art_style, _blueprint_title, _locations = _load_characters_with_refs(book)
     art_style_ref_url = r2_client.presigned_url(book["art_style_ref_key"]) if book.get("art_style_ref_key") else None
     cover_characters = _cover_characters(characters)
     reference_urls = _consistency_reference_urls(art_style_ref_url, cover_characters)
@@ -1127,11 +1189,12 @@ def regenerate_page(book_id, page_num):
             prompt = edit_instruction or base_prompt
         if not prompt:
             return jsonify({"error": "No prompt available for this page; provide one"}), 400
-        characters, _art_style, _title = _load_characters_with_refs(book)
+        characters, _art_style, _title, locations = _load_characters_with_refs(book)
         art_style_ref_url = r2_client.presigned_url(book["art_style_ref_key"]) if book.get("art_style_ref_key") else None
         characters_on_page = json.loads(page["characters_on_page"]) if page.get("characters_on_page") else None
         page_chars = _page_characters(characters, {"characters_on_page": characters_on_page})
-        reference_urls = _consistency_reference_urls(art_style_ref_url, page_chars)
+        location_ref_url = _page_location_ref_url(locations, page)
+        reference_urls = _consistency_reference_urls(art_style_ref_url, page_chars, location_ref_url)
         persist_prompt = True
 
     job_id = str(uuid.uuid4())
