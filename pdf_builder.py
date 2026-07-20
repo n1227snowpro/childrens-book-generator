@@ -37,13 +37,25 @@ LINE_SPACING = 1.25
 
 RENDER_DPI = 150
 
+# The image model sometimes paints a picture-frame-style border with white margin around the
+# scene, right up to its own edges — prompt instructions telling it not to have proven unreliable
+# (confirmed: the border persisted even after adding explicit "no border/full-bleed" language to
+# every page prompt). A plain scale-to-cover crop doesn't help either: measured on an affected
+# page, the border sat at ~4.5% of width / ~2.5% of height from the edge, but scaling only just
+# enough to cover the target canvas crops ~0% off the axis that already matches the target aspect
+# ratio most closely — so the border can survive completely untouched on that axis. Overscanning
+# by this extra factor before cropping guarantees a real margin (~6.5%+ per side, worked out
+# below) gets cut from every edge regardless of source aspect ratio, deterministically removing
+# the border instead of hoping the model didn't paint one.
+PAGE_IMAGE_OVERSCAN = 1.15
+
 
 def _cover_fit(image_path):
     target_w = round(PAGE_WIDTH / 72 * RENDER_DPI)
     target_h = round(PAGE_HEIGHT / 72 * RENDER_DPI)
 
     img = Image.open(image_path).convert("RGB")
-    scale = max(target_w / img.width, target_h / img.height)
+    scale = max(target_w / img.width, target_h / img.height) * PAGE_IMAGE_OVERSCAN
     new_w, new_h = round(img.width * scale), round(img.height * scale)
     img = img.resize((new_w, new_h), Image.LANCZOS)
 
