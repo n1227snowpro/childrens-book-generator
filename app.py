@@ -180,6 +180,36 @@ def _character_names_joined(characters):
     return ", ".join(c.get("name", "") for c in characters if c.get("name"))
 
 
+_CHARACTER_DESC_STOPWORDS = {
+    "the", "and", "with", "his", "her", "its", "she", "him", "for", "from", "that", "this",
+    "who", "has", "have", "are", "was", "were", "into", "onto", "very", "small", "tiny", "large",
+    "big", "little", "short", "long", "soft", "warm", "cool", "bright", "curious", "kind",
+    "sweet", "cute", "lovely", "wonderful", "beautiful", "clean", "shows", "showing", "front",
+    "side", "view", "pose", "background", "watercolor", "style", "reference", "portrait",
+    "character", "against",
+}
+
+
+def _character_desc_words(text):
+    return {
+        w for w in re.findall(r"[a-z]+", (text or "").lower())
+        if len(w) >= 3 and w not in _CHARACTER_DESC_STOPWORDS
+    }
+
+
+def _same_character(saved_description, new_description):
+    """Characters are tracked globally by name only (see db.upsert_character), so two unrelated
+    books that happen to give a character the same name — e.g. one story's sparrow 'Pip' and
+    another's squirrel 'Pip' — would otherwise silently reuse the wrong species' reference image.
+    Confirmed live: 'The Feathered Talent Show' had its sparrow Pip rendered as a squirrel because
+    an earlier, unrelated book already owned that name. Gate reuse on the visual descriptions
+    actually overlapping before trusting a same-name match."""
+    a, b = _character_desc_words(saved_description), _character_desc_words(new_description)
+    if not a or not b:
+        return False
+    return len(a & b) / len(a | b) >= 0.2
+
+
 def _page_characters(characters, page):
     """Restricts a page's reference images to only the characters actually present on that
     page (per Claude's characters_on_page field), so a character shown at different ages/life
@@ -272,7 +302,8 @@ def _load_characters_with_refs(book):
     characters = []
     for c in blueprint.get("characters", []):
         saved = db.get_character_by_name(c.get("name", ""))
-        characters.append({**c, "s3_key": saved["s3_key"] if saved else None})
+        matches = saved and _same_character(saved.get("visual_description", ""), c.get("visual_description", ""))
+        characters.append({**c, "s3_key": saved["s3_key"] if matches else None})
     return characters, blueprint.get("art_style", ""), blueprint.get("book_title", book.get("title", ""))
 
 
@@ -355,6 +386,8 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
                 uploaded_ref_url = r2_client.presigned_url(key)
 
             saved = None if uploaded_ref_url else db.get_character_by_name(name)
+            if saved and not _same_character(saved.get("visual_description", ""), char.get("visual_description", "")):
+                saved = None
 
             if saved and saved.get("s3_key"):
                 char["s3_key"] = saved["s3_key"]
