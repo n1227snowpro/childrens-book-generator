@@ -12,7 +12,8 @@ def _client():
 
 
 def _build_prompt(
-    book_title, target_age, theme, main_characters, art_style_preference, page_count, content_instruction=""
+    book_title, target_age, theme, main_characters, art_style_preference, page_count,
+    content_instruction="", existing_character_names=None,
 ):
     if page_count >= 5:
         intro = max(1, round(page_count * 0.10))
@@ -40,6 +41,21 @@ def _build_prompt(
         else ""
     )
 
+    # Character reference images are matched across the whole library by name (see
+    # db.get_character_by_name), so two unrelated books that happen to name a character the same
+    # thing risk one silently reusing the other's reference image — confirmed live when one
+    # book's sparrow "Pip" got rendered as another book's squirrel "Pip". Steering new character
+    # names away from names already in use prevents the collision instead of just detecting it.
+    existing_names_block = (
+        f"\nNames already used by characters in other books in this library: "
+        f"{', '.join(existing_character_names)}. To avoid this book's characters being confused "
+        "with unrelated ones from other stories, do NOT give any NEW character in this book one "
+        "of these exact names — unless the main characters listed above explicitly specify one "
+        "of these names, in which case use it as given.\n"
+        if existing_character_names
+        else ""
+    )
+
     return f"""You are a professional children's book author and illustrator art director.
 
 Create a complete blueprint for an illustrated children's book with these inputs:
@@ -51,6 +67,7 @@ Create a complete blueprint for an illustrated children's book with these inputs
 - Total pages: {page_count}
 {content_block}
 {arc_guidance}
+{existing_names_block}
 
 IMPORTANT — characters who change age or life stage:
 If a character appears at meaningfully different ages or life stages across the story (for example:
@@ -130,10 +147,12 @@ def _generate_blueprint_once(prompt, client):
 
 
 def generate_blueprint(
-    book_title, target_age, theme, main_characters, art_style_preference, page_count, content_instruction=""
+    book_title, target_age, theme, main_characters, art_style_preference, page_count,
+    content_instruction="", existing_character_names=None,
 ):
     prompt = _build_prompt(
-        book_title, target_age, theme, main_characters, art_style_preference, page_count, content_instruction
+        book_title, target_age, theme, main_characters, art_style_preference, page_count,
+        content_instruction, existing_character_names,
     )
     client = _client()
 

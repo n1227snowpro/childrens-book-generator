@@ -321,6 +321,7 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
             _set_progress(job_id, "blueprint", "Reusing saved story", 1, 1)
         else:
             _set_progress(job_id, "blueprint", "Generating blueprint", 0, 1)
+            existing_character_names = [c["name"] for c in db.list_characters()]
             blueprint = claude_client.generate_blueprint(
                 params["book_title"],
                 params["target_age"],
@@ -329,6 +330,7 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
                 params["art_style_preference"],
                 params["page_count"],
                 params["content_instruction"],
+                existing_character_names,
             )
             _set_progress(job_id, "blueprint", "Generating blueprint", 1, 1)
 
