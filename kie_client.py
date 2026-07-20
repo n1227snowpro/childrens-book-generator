@@ -50,6 +50,13 @@ MODELS = {
         "price_per_image": 0.03,
         "note": "Strongest prompt-following and text rendering, priciest",
     },
+    "nano-banana-pro": {
+        "label": "Nano Banana Pro",
+        "provider": "Google",
+        "price_per_image": 0.12,
+        "note": "Same model used for covers — sharper detail and text rendering; price is an "
+                "estimate, not confirmed against a published KIE.ai rate card",
+    },
 }
 
 DEFAULT_MODEL = "nano-banana"
@@ -209,8 +216,12 @@ def _generate_gpt_image_2(prompt, reference_image_urls, aspect_ratio):
 MAX_REFERENCE_IMAGES = 8
 NANO_BANANA_MAX_REFERENCE_IMAGES = 3
 
+# Interior pages are printed much smaller than a full wraparound cover, so default to 2K rather
+# than the cover's 4K — cheaper and faster with no visible quality loss at page size.
+_PAGE_RESOLUTION_FOR_NANO_BANANA_PRO = "2K"
 
-def generate_image(model_id, prompt, reference_image_urls=None, aspect_ratio="1:1"):
+
+def generate_image(model_id, prompt, reference_image_urls=None, aspect_ratio="1:1", resolution=None):
     if model_id not in MODELS:
         raise ValueError(f"Unknown image model: {model_id}")
 
@@ -221,6 +232,11 @@ def generate_image(model_id, prompt, reference_image_urls=None, aspect_ratio="1:
     def _attempt():
         if model_id == "nano-banana":
             return _generate_nano_banana(prompt, reference_image_urls, aspect_ratio)
+        if model_id == "nano-banana-pro":
+            return _generate_nano_banana_pro(
+                prompt, reference_image_urls or [], aspect_ratio,
+                resolution or _PAGE_RESOLUTION_FOR_NANO_BANANA_PRO,
+            )
         if model_id in ("flux-kontext-pro", "flux-kontext-max"):
             # Flux Kontext only accepts a single conditioning image.
             return _generate_flux_kontext(prompt, model_id, reference_image_urls, aspect_ratio)
