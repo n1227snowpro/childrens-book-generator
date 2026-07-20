@@ -635,7 +635,8 @@ def auto_generate_fields():
         return jsonify({"error": "idea is required"}), 400
 
     try:
-        fields = gemini_client.generate_book_fields(idea, target_age)
+        existing_character_names = [c["name"] for c in db.list_characters()]
+        fields = gemini_client.generate_book_fields(idea, target_age, existing_character_names)
     except Exception as e:
         return jsonify({"error": str(e)}), 502
 

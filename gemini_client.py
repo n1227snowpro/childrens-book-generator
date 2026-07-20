@@ -20,12 +20,24 @@ RESPONSE_SCHEMA = {
 }
 
 
-def _build_prompt(idea, target_age):
+def _build_prompt(idea, target_age, existing_character_names=None):
+    # Left unconstrained, this reliably defaults to naming the protagonist "Pip" regardless of
+    # idea or species — confirmed live across multiple unrelated books. Character reference
+    # images are matched across the whole library by name (see db.get_character_by_name), so
+    # repeatedly landing on the same handful of default names raises the odds of an unrelated
+    # book's character silently reusing another's reference image. Explicit anti-default and
+    # library-avoidance instructions push toward real variety instead.
+    existing_names_block = (
+        f"\nNames already used by characters in other books in this library: "
+        f"{', '.join(existing_character_names)}. Do not reuse any of these exact names.\n"
+        if existing_character_names
+        else ""
+    )
     return f"""You are helping an author brainstorm a children's picture book from a rough idea.
 
 Book idea: {idea}
 Target age: {target_age}
-
+{existing_names_block}
 Generate these five fields:
 - book_title: a short, catchy, age-appropriate title
 - theme: one or two sentences describing the book's theme or central message
@@ -33,7 +45,10 @@ Generate these five fields:
 tone, and any lesson or message it should convey — detailed enough that a writer could draft the \
 full story from it alone
 - main_characters: 1-3 main characters as "Name — short visual and personality description", \
-separated by semicolons
+separated by semicolons. Pick names that genuinely fit this specific character and idea — vary \
+naming style across generations (playful, classic, nature-inspired, cross-cultural, invented, \
+etc.) instead of defaulting to a go-to name like "Pip" out of habit. Avoid picking "Pip" unless \
+it is a distinctly better fit than every other option.
 - art_style_preference: a vivid description of the illustration art style (medium, palette, mood)
 
 Return ONLY a JSON object with exactly these five fields, values in plain text (no markdown)."""
@@ -183,10 +198,13 @@ def generate_amazon_description(story_outline, theme, title, subtitle, target_ag
     return json.loads(parts[0]["text"]).get("description", "")
 
 
-def generate_book_fields(idea, target_age="4-8"):
+def generate_book_fields(idea, target_age="4-8", existing_character_names=None):
     api_key = settings.get("GEMINI_API_KEY")
     payload = {
-        "contents": [{"role": "user", "parts": [{"text": _build_prompt(idea, target_age)}]}],
+        "contents": [{
+            "role": "user",
+            "parts": [{"text": _build_prompt(idea, target_age, existing_character_names)}],
+        }],
         "generationConfig": {
             "responseMimeType": "application/json",
             "responseSchema": RESPONSE_SCHEMA,
