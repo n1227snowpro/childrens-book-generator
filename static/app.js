@@ -737,6 +737,13 @@ function renderPageThumb(bookId, page) {
       <button type="button" class="btn-secondary btn-small" data-action="regen">Regenerate</button>
     </div>
     <textarea class="page-prompt-input hint" rows="2" placeholder="${escapeHtml(editPlaceholder)}">${escapeHtml(prefill)}</textarea>
+    ${page.is_placeholder ? "" : `
+    <label class="page-from-scratch hint">
+      <input type="checkbox" class="from-scratch-input" />
+      Regenerate from scratch using character reference (use this if the character doesn't match
+      its reference — a normal edit only looks at this page's current image, not the reference)
+    </label>
+    `}
     <p class="page-thumb-status hint"></p>
   `;
 
@@ -744,6 +751,7 @@ function renderPageThumb(bookId, page) {
   const statusEl = wrap.querySelector(".page-thumb-status");
   const img = wrap.querySelector("img");
   const promptInput = wrap.querySelector(".page-prompt-input");
+  const fromScratchInput = wrap.querySelector(".from-scratch-input");
 
   btn.addEventListener("click", () => {
     btn.disabled = true;
@@ -752,7 +760,10 @@ function renderPageThumb(bookId, page) {
     fetch(`/api/books/${bookId}/pages/${page.page_num}/regenerate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: promptInput.value.trim() }),
+      body: JSON.stringify({
+        prompt: promptInput.value.trim(),
+        from_scratch: fromScratchInput ? fromScratchInput.checked : false,
+      }),
     })
       .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
       .then(({ ok, data }) => {

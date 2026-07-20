@@ -373,6 +373,20 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   margin: 0 !important;
 }
 
+.page-from-scratch {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 0 10px 8px;
+  cursor: pointer;
+}
+
+.page-from-scratch input {
+  width: auto;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
 .history-description {
   margin-top: 18px;
   padding-top: 18px;

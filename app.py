@@ -1099,11 +1099,12 @@ def regenerate_page(book_id, page_num):
     data = request.get_json(force=True, silent=True) or {}
     image_model = data.get("image_model") or book.get("image_model") or kie_client.DEFAULT_MODEL
     edit_instruction = (data.get("prompt") or "").strip()
+    from_scratch = bool(data.get("from_scratch"))
 
     if image_model not in kie_client.MODELS:
         return jsonify({"error": f"Unknown image_model: {image_model}"}), 400
 
-    if page.get("s3_key") and not page.get("is_placeholder"):
+    if page.get("s3_key") and not page.get("is_placeholder") and not from_scratch:
         # Edit mode: use the page's current image as the reference and apply the instruction to
         # it, rather than regenerating the scene from scratch — keeps everything about the page
         # that wasn't mentioned in the instruction unchanged, since the model is editing the
@@ -1114,9 +1115,16 @@ def regenerate_page(book_id, page_num):
         reference_urls = [r2_client.presigned_url(page["s3_key"])]
         persist_prompt = False
     else:
-        # No successful image to edit yet (placeholder or never generated) — fall back to a fresh
-        # generation using the book's character/style references, same as before.
-        prompt = edit_instruction or page.get("image_prompt") or ""
+        # from_scratch (or no successful image to edit yet) — regenerate from the character/style
+        # references instead of editing the current pixels. This is what recovers a page whose
+        # character already drifted off-model: editing only ever looks at the page's own (already
+        # wrong) image, so it can never pull the character back in line with its reference — only
+        # a fresh generation conditioned on the actual reference images can.
+        base_prompt = page.get("image_prompt") or ""
+        if from_scratch and edit_instruction and base_prompt:
+            prompt = f"{base_prompt}\n\nAdditional instruction: {edit_instruction}"
+        else:
+            prompt = edit_instruction or base_prompt
         if not prompt:
             return jsonify({"error": "No prompt available for this page; provide one"}), 400
         characters, _art_style, _title = _load_characters_with_refs(book)
