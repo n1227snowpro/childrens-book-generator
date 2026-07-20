@@ -167,10 +167,13 @@ def _character_reference_urls(characters):
 
 def _consistency_reference_urls(art_style_ref_url, characters, location_ref_url=None):
     # Order matters: nano-banana (the default model) silently truncates to its first 3 reference
-    # images (see kie_client.NANO_BANANA_MAX_REFERENCE_IMAGES), so style and location — which
-    # anchor the whole page rather than one element of it — go first, ahead of individual
-    # character references.
-    urls = [art_style_ref_url, location_ref_url] + _character_reference_urls(characters)
+    # images (see kie_client.NANO_BANANA_MAX_REFERENCE_IMAGES). Character references must win that
+    # budget over location — confirmed live as a regression on "Chief Iggy's Big Red Rescue" page
+    # 4/5 (style + location + Chief Iggy already filled all 3 slots, silently dropping Mateo's
+    # reference entirely and making him inconsistent). A wrong-looking character is a worse
+    # failure than an inconsistent background, so location goes last and only survives if there's
+    # room left after style and every character on the page.
+    urls = [art_style_ref_url] + _character_reference_urls(characters) + [location_ref_url]
     return [u for u in urls if u]
 
 
