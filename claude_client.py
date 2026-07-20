@@ -116,14 +116,18 @@ Return a single raw JSON object with NO markdown formatting, NO code fences, and
       "page_num": 1,
       "story_text": "2-4 age-appropriate sentences for this page",
       "scene_description": "string",
-      "image_prompt": "string describing exactly what should be illustrated on this page",
+      "image_prompt": "string describing exactly what should be illustrated on this page — visual content ONLY, see the no-text rule below",
       "characters_on_page": ["exact character name(s) from the characters array that appear in this page's illustration, or an empty array if none"],
       "location": "exact location name from the locations array that this page's scene is set in, or null if this page has no tracked recurring location"
     }}
   ]
 }}
 
-The "pages" array must contain exactly {page_count} entries, page_num from 1 to {page_count}, following the story arc above. Every "characters_on_page" entry must exactly match a "name" in the "characters" array — always reference the correct life-stage variant for that point in the story (e.g. use "Baby Jesus" on early pages and "Adult Jesus" on later pages, never mix them on the same page unless the scene genuinely shows both). Every non-null "location" must exactly match a "name" in the "locations" array. Age-appropriate language for target age {target_age}. Output ONLY the JSON object."""
+The "pages" array must contain exactly {page_count} entries, page_num from 1 to {page_count}, following the story arc above. Every "characters_on_page" entry must exactly match a "name" in the "characters" array — always reference the correct life-stage variant for that point in the story (e.g. use "Baby Jesus" on early pages and "Adult Jesus" on later pages, never mix them on the same page unless the scene genuinely shows both). Every non-null "location" must exactly match a "name" in the "locations" array. Age-appropriate language for target age {target_age}.
+
+IMPORTANT — no text in page illustrations: a page's "image_prompt" must never ask for any words, letters, captions, labels, signs, or lettering (including things like "The End", a title, or a character's name) to be rendered as part of the artwork — not even a chapter/section closer on the final page. The app already overlays each page's "story_text" as its own separately-rendered, KDP-margin-safe caption; any text baked into the illustration itself bypasses that safety margin entirely and has caused real KDP interior rejections for text landing too close to the trim edge. This restriction applies to every page, including the last one — end the story through the "story_text" and imagery alone, never through on-image lettering.
+
+Output ONLY the JSON object."""
 
 
 MAX_TOKENS = 64000
