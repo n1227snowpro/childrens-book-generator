@@ -201,6 +201,21 @@ def _consistency_suffix(reference_urls):
     )
 
 
+# Applied to every page prompt unconditionally, regardless of what Claude's blueprint generation
+# produced — a prompt-side instruction alone isn't a guarantee the model complies with it every
+# time. Confirmed live: a page's own image_prompt asked for "'The End' in gentle script" baked
+# into the artwork, and that text landed too close to the trim edge, causing a real KDP interior
+# rejection. Text drawn inside the illustration itself is completely outside the margin-safety
+# math that protects the app's own separately-rendered story-text band, so this is a hard,
+# always-on guardrail rather than something left to prompt-following.
+_PAGE_NO_TEXT_SUFFIX = (
+    " Do not render any text, words, letters, captions, labels, signage, or lettering anywhere "
+    "in this illustration — including a closing phrase like \"The End\" if this is the final page. "
+    "The story's own text is rendered separately by the app; text drawn into the image itself is "
+    "not covered by that safety margin."
+)
+
+
 def _character_names_joined(characters):
     return ", ".join(c.get("name", "") for c in characters if c.get("name"))
 
@@ -503,6 +518,7 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
             if names_joined:
                 prompt += f" Characters present: {names_joined}."
             prompt += _consistency_suffix(page_refs)
+            prompt += _PAGE_NO_TEXT_SUFFIX
             page_prompts.append(prompt)
             page_reference_urls_per_page.append(page_refs)
         total_pages = len(page_prompts)
@@ -1192,6 +1208,8 @@ def regenerate_page(book_id, page_num):
             prompt = edit_instruction or base_prompt
         if not prompt:
             return jsonify({"error": "No prompt available for this page; provide one"}), 400
+        if _PAGE_NO_TEXT_SUFFIX not in prompt:
+            prompt += _PAGE_NO_TEXT_SUFFIX
         characters, _art_style, _title, locations = _load_characters_with_refs(book)
         art_style_ref_url = r2_client.presigned_url(book["art_style_ref_key"]) if book.get("art_style_ref_key") else None
         characters_on_page = json.loads(page["characters_on_page"]) if page.get("characters_on_page") else None
