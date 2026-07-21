@@ -79,6 +79,22 @@ clothing, hair, etc). Never reuse one character entry to represent drastically d
 stage needs its own reference so the illustrations stay age-accurate instead of drifting toward one
 fixed appearance (e.g. accidentally giving an infant a beard).
 
+IMPORTANT — character clothing/outfits must be exact and repeated verbatim:
+For every character who wears any clothing, uniform, accessory, or costume piece (this includes
+anthropomorphic animals in clothes, not just human characters), the "clothing" field must spell out
+the precise garment(s), their exact color(s), and any distinguishing pattern, badge, or insignia —
+specific enough that the same outfit could be redrawn identically from the text alone, with no
+image reference, every single time. A character's illustration is regenerated independently on
+every page, and a reference image isn't always available to keep the outfit visually anchored, so
+vague clothing descriptions ("a firefighter uniform", "her usual outfit") are what causes a
+character's outfit to drift or randomly disappear between pages — always write the specific,
+literal detail instead ("a navy-blue fire chief's uniform jacket with gold buttons and a gold badge
+reading 'CHIEF' on the left chest, paired with a matching navy cap"). This exact outfit must stay
+identical on every page unless the story explicitly changes it (e.g. pajamas at bedtime vs. a school
+uniform by day) — treat a deliberate costume change the same way as an age/life-stage change: a
+separate, clearly-named character entry rather than leaving it to chance. If a character wears no
+clothing at all (e.g. an ordinary, non-anthropomorphic animal), set "clothing" to an empty string.
+
 IMPORTANT — recurring locations/settings:
 Identify each distinct physical setting that the story returns to more than once (for example: a
 character's home, a specific beach, a classroom, a forest clearing). Whenever the story comes back
@@ -100,8 +116,9 @@ Return a single raw JSON object with NO markdown formatting, NO code fences, and
       "name": "string — must be unique; include a life-stage qualifier if this character appears at multiple ages (e.g. 'Baby Jesus')",
       "role": "string",
       "visual_description": "string",
+      "clothing": "string — the exact garment(s), color(s), and any pattern/badge this character wears on every page, precise enough to redraw identically without an image reference; empty string if the character wears no clothing",
       "personality": "string",
-      "image_prompt": "string describing a clean reference portrait of this character at this specific age/stage"
+      "image_prompt": "string describing a clean reference portrait of this character at this specific age/stage, explicitly including the exact clothing described in the \"clothing\" field if any"
     }}
   ],
   "locations": [

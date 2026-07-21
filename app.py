@@ -235,6 +235,22 @@ def _character_names_joined(characters):
     return ", ".join(c.get("name", "") for c in characters if c.get("name"))
 
 
+def _character_clothing_notes(characters):
+    """Restates each on-page character's exact outfit directly in the page prompt's own text,
+    independent of whether their reference image actually reaches the model — nano-banana's
+    3-image cap (see kie_client.NANO_BANANA_MAX_REFERENCE_IMAGES) means a character's reference
+    gets silently dropped outright on busier pages, and relying on the image alone to carry
+    clothing consistency was confirmed live as characters' outfits randomly changing color or
+    disappearing between pages. Blueprint generation is instructed to write a precise "clothing"
+    field per character for exactly this reason (see claude_client.py)."""
+    notes = [
+        f"{c['name']} wears {c['clothing'].strip()}."
+        for c in characters
+        if c.get("name") and (c.get("clothing") or "").strip()
+    ]
+    return " " + " ".join(notes) if notes else ""
+
+
 _CHARACTER_DESC_STOPWORDS = {
     "the", "and", "with", "his", "her", "its", "she", "him", "for", "from", "that", "this",
     "who", "has", "have", "are", "was", "were", "into", "onto", "very", "small", "tiny", "large",
@@ -348,6 +364,7 @@ def _build_cover_prompt(title, subtitle, theme, characters, reference_urls):
     names = _character_names_joined(characters)
     if names:
         prompt += f" Characters present: {names}."
+    prompt += _character_clothing_notes(characters)
     prompt += _consistency_suffix(reference_urls)
     return prompt
 
@@ -459,7 +476,9 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
             else:
                 try:
                     char_ref_urls = [u for u in [uploaded_ref_url, art_style_ref_url] if u]
-                    char_prompt = char.get("image_prompt", "") + _consistency_suffix(
+                    char_prompt = char.get("image_prompt", "")
+                    char_prompt += _character_clothing_notes([char])
+                    char_prompt += _consistency_suffix(
                         [art_style_ref_url] if art_style_ref_url else []
                     )
                     kie_url = kie_client.generate_character_reference(
@@ -532,6 +551,7 @@ def _run_pipeline(job_id, params, uploaded_paths, resume_book_id=None):
             prompt = p.get("image_prompt", "")
             if names_joined:
                 prompt += f" Characters present: {names_joined}."
+            prompt += _character_clothing_notes(page_chars)
             prompt += _consistency_suffix(page_refs)
             prompt += _PAGE_NO_TEXT_SUFFIX
             prompt += _PAGE_FULL_BLEED_SUFFIX
@@ -1224,16 +1244,19 @@ def regenerate_page(book_id, page_num):
             prompt = edit_instruction or base_prompt
         if not prompt:
             return jsonify({"error": "No prompt available for this page; provide one"}), 400
-        if _PAGE_NO_TEXT_SUFFIX not in prompt:
-            prompt += _PAGE_NO_TEXT_SUFFIX
-        if _PAGE_FULL_BLEED_SUFFIX not in prompt:
-            prompt += _PAGE_FULL_BLEED_SUFFIX
         characters, _art_style, _title, locations = _load_characters_with_refs(book)
         art_style_ref_url = r2_client.presigned_url(book["art_style_ref_key"]) if book.get("art_style_ref_key") else None
         characters_on_page = json.loads(page["characters_on_page"]) if page.get("characters_on_page") else None
         page_chars = _page_characters(characters, {"characters_on_page": characters_on_page})
         location_ref_url = _page_location_ref_url(locations, page)
         reference_urls = _consistency_reference_urls(art_style_ref_url, page_chars, location_ref_url)
+        clothing_notes = _character_clothing_notes(page_chars)
+        if clothing_notes and clothing_notes not in prompt:
+            prompt += clothing_notes
+        if _PAGE_NO_TEXT_SUFFIX not in prompt:
+            prompt += _PAGE_NO_TEXT_SUFFIX
+        if _PAGE_FULL_BLEED_SUFFIX not in prompt:
+            prompt += _PAGE_FULL_BLEED_SUFFIX
         persist_prompt = True
 
     job_id = str(uuid.uuid4())
