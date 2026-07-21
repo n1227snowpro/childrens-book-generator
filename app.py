@@ -251,6 +251,32 @@ def _character_clothing_notes(characters):
     return " " + " ".join(notes) if notes else ""
 
 
+def _character_brief_description(character):
+    """First sentence (or ~140 chars) of a character's visual_description — enough to visually
+    distinguish similar-looking characters in a prompt without bloating it with the character's
+    full multi-sentence reference-portrait description."""
+    desc = (character.get("visual_description") or "").strip()
+    if not desc:
+        return ""
+    return desc.split(".")[0].strip()[:140]
+
+
+def _character_names_with_descriptions(characters):
+    """Unlike a bare name list, this pairs each name with a short visual descriptor so the model
+    can tell apart characters sent as separate reference images. Confirmed live as necessary on
+    "Silas and the Silver Seeds": its protagonist and mentor are both owls, and with only bare
+    names in the prompt, nothing distinguished which reference image was which — the protagonist
+    was left out of the regenerated cover entirely."""
+    parts = []
+    for c in characters:
+        name = c.get("name")
+        if not name:
+            continue
+        desc = _character_brief_description(c)
+        parts.append(f"{name} ({desc})" if desc else name)
+    return ", ".join(parts)
+
+
 _CHARACTER_DESC_STOPWORDS = {
     "the", "and", "with", "his", "her", "its", "she", "him", "for", "from", "that", "this",
     "who", "has", "have", "are", "was", "were", "into", "onto", "very", "small", "tiny", "large",
@@ -371,19 +397,26 @@ def _build_cover_prompt(title, subtitle, theme, characters, reference_urls):
         (" and subtitle" if subtitle else "") +
         " described above, rendered as part of the illustration. Theme: " + theme + "."
     )
-    names = _character_names_joined(characters)
-    if names:
-        prompt += f" Characters present: {names}."
+    names_with_desc = _character_names_with_descriptions(characters)
+    if names_with_desc:
+        prompt += f" Characters present: {names_with_desc}."
     protagonist = next(
         (c for c in characters if (c.get("role") or "").strip().lower().startswith("protagonist")),
         characters[0] if characters else None,
     )
     main_character_name = protagonist.get("name") if protagonist else None
     if main_character_name:
+        protagonist_desc = _character_brief_description(protagonist)
+        desc_clause = f" — {protagonist_desc} — " if protagonist_desc else " "
         prompt += (
-            f" {main_character_name}, the story's main character, must be positioned on the "
-            "right half (front cover) of the image, as the clear focal point of the front-cover "
-            "composition — never on the left half (back cover) and never straddling the center."
+            f" {main_character_name}{desc_clause}is the story's main character and MUST be "
+            "unmistakably featured: the largest, most visually prominent figure in the "
+            "illustration, positioned on the right half (front cover), never on the left half "
+            "(back cover) and never straddling the center. If another character looks visually "
+            f"similar to {main_character_name} (e.g. another animal of the same species), make "
+            f"sure the differences described above are clearly rendered so {main_character_name} "
+            "is unambiguously who they are — any other characters present are smaller, clearly "
+            "secondary figures, never mistaken for or blended with the main character."
         )
     prompt += _character_clothing_notes(characters)
     prompt += _consistency_suffix(reference_urls)
