@@ -114,7 +114,7 @@ Return a single raw JSON object with NO markdown formatting, NO code fences, and
   "characters": [
     {{
       "name": "string — must be unique; include a life-stage qualifier if this character appears at multiple ages (e.g. 'Baby Jesus')",
-      "role": "string",
+      "role": "string — must begin with the literal word \"Protagonist\" for the story's single main character (there must be exactly one), and \"Supporting character\" for every other character; this drives which character the cover always foregrounds",
       "visual_description": "string",
       "clothing": "string — the exact garment(s), color(s), and any pattern/badge this character wears on every page, precise enough to redraw identically without an image reference; empty string if the character wears no clothing",
       "personality": "string",

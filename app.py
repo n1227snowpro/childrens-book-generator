@@ -310,7 +310,17 @@ def _cover_characters(characters):
     otherwise send every one of them as a reference image and list all their names in the prompt.
     That dilutes how closely any single reference gets followed — confirmed live for page
     generation (see _page_characters/NANO_BANANA_MAX_REFERENCE_IMAGES) and the same failure mode
-    applies here. Capping to a small subset keeps the ones that ARE sent from getting diluted."""
+    applies here. Capping to a small subset keeps the ones that ARE sent from getting diluted.
+
+    The protagonist must survive this cap — _build_cover_prompt always positions them on the
+    front cover, so cutting them out here (e.g. if the blueprint didn't list them among the first
+    few characters) would leave that instruction with nothing to point at."""
+    protagonist = next(
+        (c for c in characters if (c.get("role") or "").strip().lower().startswith("protagonist")),
+        None,
+    )
+    if protagonist and protagonist not in characters[:COVER_MAX_CHARACTERS]:
+        return [protagonist] + characters[:COVER_MAX_CHARACTERS - 1]
     return characters[:COVER_MAX_CHARACTERS]
 
 
@@ -364,6 +374,17 @@ def _build_cover_prompt(title, subtitle, theme, characters, reference_urls):
     names = _character_names_joined(characters)
     if names:
         prompt += f" Characters present: {names}."
+    protagonist = next(
+        (c for c in characters if (c.get("role") or "").strip().lower().startswith("protagonist")),
+        characters[0] if characters else None,
+    )
+    main_character_name = protagonist.get("name") if protagonist else None
+    if main_character_name:
+        prompt += (
+            f" {main_character_name}, the story's main character, must be positioned on the "
+            "right half (front cover) of the image, as the clear focal point of the front-cover "
+            "composition — never on the left half (back cover) and never straddling the center."
+        )
     prompt += _character_clothing_notes(characters)
     prompt += _consistency_suffix(reference_urls)
     return prompt
